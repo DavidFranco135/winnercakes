@@ -1,0 +1,656 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Admin panel: scale everything (rem-based) up on large screens. */
+@media (min-width: 1280px) {
+  html.app-scale {
+    font-size: 17.5px;
+  }
+}
+@media (min-width: 1600px) {
+  html.app-scale {
+    font-size: 19px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Loja pública: efeitos (components/store/fx.ts liga as classes).
+   Tudo é decorativo e não muda tamanho nem posição de nada; com "reduzir
+   movimento" ligado no aparelho, só os estados estáticos ficam.
+   --------------------------------------------------------------------------- */
+
+.store-fx :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 9999px;
+}
+
+/* Barra de progresso de rolagem + sombra do cabeçalho ao rolar */
+.store-fx .fx-header {
+  transition: box-shadow 0.4s ease, background-color 0.4s ease;
+}
+.store-fx .fx-header.is-scrolled {
+  box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.45);
+}
+.store-fx .fx-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 2px;
+  width: 100%;
+  transform-origin: left;
+  transform: scaleX(var(--fx-scroll, 0));
+  background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent));
+  box-shadow: 0 0 12px var(--accent-ring);
+  pointer-events: none;
+}
+
+/* Cabeçalho que encolhe ao rolar: a faixa de avisos recolhe, a linha do
+   cabeçalho fica mais baixa e a logo menor. */
+.store-fx .fx-marquee {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.store-fx .fx-header.is-scrolled .fx-marquee {
+  grid-template-rows: 0fr;
+}
+.store-fx .fx-head-row {
+  transition: padding 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.store-fx .fx-header.is-scrolled .fx-head-row {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+.store-fx .fx-logo {
+  transition: height 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.store-fx .fx-header.is-scrolled .fx-logo {
+  height: 2.5rem;
+}
+
+/* Faixa de avisos: passa devagar; para ao passar o mouse. */
+.store-fx .fx-marquee-track:hover {
+  animation-play-state: paused;
+}
+
+/* Botões principais: halo, pressão, brilho que atravessa e onda no clique */
+.store-fx .fx-btn {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s ease, filter 0.25s ease;
+}
+.store-fx .fx-btn:hover {
+  box-shadow: 0 12px 32px -12px var(--accent), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+}
+.store-fx .fx-btn.fx-glow-wa:hover {
+  box-shadow: 0 12px 32px -10px #25d366;
+}
+.store-fx .fx-btn:active {
+  transform: scale(0.96);
+  filter: brightness(1.05);
+}
+.store-fx .fx-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.38) 50%, transparent 70%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+.store-fx .fx-ripple {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: currentColor;
+  opacity: 0.28;
+  transform: scale(0);
+}
+
+/* Cards: luz que segue o ponteiro + borda iluminada */
+.store-fx .fx-spotlight {
+  position: relative;
+}
+.store-fx .fx-spotlight::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  background:
+    radial-gradient(420px circle at var(--fx-x, 50%) var(--fx-y, 50%), var(--accent-ring), transparent 45%);
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
+  z-index: 2;
+}
+@media (hover: hover) {
+  .store-fx .fx-spotlight:hover::after {
+    opacity: 1;
+  }
+}
+
+/* Selo "Destaque": reflexo periódico */
+.store-fx .fx-shine {
+  position: relative;
+  overflow: hidden;
+}
+.store-fx .fx-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.65) 50%, transparent 75%);
+  transform: translateX(-130%);
+  pointer-events: none;
+}
+
+/* Fotos: surgem desfocadas e entram em foco (só depois que o script assumiu) */
+.store-fx.fx-ready main img:not(.is-loaded) {
+  opacity: 0;
+  filter: blur(14px);
+}
+.store-fx.fx-ready main img {
+  transition: opacity 0.6s ease, filter 0.8s ease, transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .store-fx .fx-btn:hover::before {
+    animation: fx-sweep 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .store-fx .fx-ripple {
+    animation: fx-ripple 0.65s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .store-fx .fx-shine::after {
+    animation: fx-sweep 1.2s ease-in-out 1.5s infinite;
+    animation-duration: 4.5s;
+  }
+  .store-fx .fx-pulse {
+    animation: fx-pulse 2.4s ease-out infinite;
+  }
+  .store-fx .fx-marquee-track {
+    animation: fx-marquee 60s linear infinite;
+  }
+}
+
+/* Com "reduzir movimento", a faixa fica parada e rola na mão. */
+@media (prefers-reduced-motion: reduce) {
+  .store-fx .fx-marquee > div {
+    overflow-x: auto;
+  }
+}
+
+@keyframes fx-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-25%); }
+}
+
+@keyframes fx-sweep {
+  0% { transform: translateX(-130%); }
+  25%, 100% { transform: translateX(130%); }
+}
+@keyframes fx-ripple {
+  to { transform: scale(1); opacity: 0; }
+}
+@keyframes fx-pulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-ring), 0 20px 40px -12px rgba(0, 0, 0, 0.35); }
+  70% { box-shadow: 0 0 0 16px transparent, 0 20px 40px -12px rgba(0, 0, 0, 0.35); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 20px 40px -12px rgba(0, 0, 0, 0.35); }
+}
+
+/* ---------------------------------------------------------------------------
+   Abertura da loja (components/store/SplashIntro.tsx)
+   Só transform e opacity nas animações: rodam na placa de vídeo, sem travar
+   enquanto a loja é montada por baixo.
+   --------------------------------------------------------------------------- */
+.store-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.75rem;
+  background: radial-gradient(circle at 50% 45%, #d61a2e 0%, #a50d1d 55%, #6e0612 100%);
+  transition: opacity 0.6s ease, visibility 0.6s;
+  cursor: pointer;
+}
+.store-splash.is-exit {
+  opacity: 0;
+  visibility: hidden;
+}
+.store-splash-stage {
+  position: relative;
+  width: 260px;
+  height: 260px;
+  transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.store-splash.is-exit .store-splash-stage {
+  transform: scale(1.15);
+}
+@media (max-width: 400px) {
+  .store-splash-stage { transform: scale(0.82); }
+  .store-splash.is-exit .store-splash-stage { transform: scale(0.95); }
+}
+
+/* Camadas do anel (todas do mesmo tamanho, centradas) */
+.ms-ring, .ms-spin, .ms-full, .ms-arc, .ms-solid, .ms-track, .ms-thin, .ms-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+}
+.ms-ring { inset: 18px; }
+/* recorte em anel: só a borda de ~4 px aparece */
+.ms-arc, .ms-solid, .ms-track, .ms-thin {
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4.5px), #000 calc(100% - 3.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4.5px), #000 calc(100% - 3.5px));
+}
+.ms-track { background: rgba(255, 244, 228, 0.14); }
+.ms-thin {
+  inset: -12px;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1px));
+  background: conic-gradient(rgba(255, 246, 230, 0.55) 0 18%, transparent 18% 50%, rgba(255, 246, 230, 0.3) 50% 60%, transparent 60%);
+  will-change: transform;
+}
+/* cometa: cauda que esmaece até a cabeça brilhante (no topo) */
+.ms-arc {
+  background: conic-gradient(
+    transparent 0deg,
+    transparent 70deg,
+    rgba(255, 213, 74, 0.15) 150deg,
+    #ffc72c 250deg,
+    #ffe08a 320deg,
+    #fff6e6 357deg,
+    transparent 360deg
+  );
+}
+.ms-glow {
+  filter: blur(7px);
+  opacity: 0.95;
+  transform: scale(1.02);
+}
+.ms-spin { will-change: transform; }
+.ms-head {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: 10px;
+  height: 10px;
+  margin-left: -7px;
+  border-radius: 9999px;
+  background: #fff3df;
+  box-shadow: 0 0 10px 4px rgba(255, 224, 138, 0.95), 0 0 24px 8px rgba(255, 199, 44, 0.55);
+}
+/* anel completo que acende no fim */
+.ms-full { opacity: 0; will-change: opacity; }
+.ms-solid {
+  background: conic-gradient(#fff6e6, #ffe08a 25%, #ffc72c 50%, #ffe08a 75%, #fff6e6);
+}
+.ms-wave {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 3px solid #fff6e6;
+  box-shadow: 0 0 24px 6px rgba(255, 199, 44, 0.6), inset 0 0 18px 2px rgba(255, 199, 44, 0.6);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.ms-halo {
+  inset: -30px;
+  background: radial-gradient(circle, rgba(255, 230, 160, 0.55) 0%, rgba(255, 199, 44, 0.25) 35%, transparent 65%);
+  opacity: 0;
+  will-change: opacity, transform;
+}
+
+.store-splash-disc {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 168px;
+  height: 168px;
+  margin: -84px 0 0 -84px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 50% 35%, #ffffff 0%, #fff4e4 70%, #f6dcc2 100%);
+  box-shadow: 0 0 0 1px rgba(255, 246, 230, 0.25), 0 0 60px -6px rgba(255, 199, 44, 0.55),
+    inset 0 -8px 20px rgba(120, 20, 30, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.store-splash-logo {
+  width: 78%;
+  height: 78%;
+  object-fit: contain;
+  mix-blend-mode: multiply;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.store-splash-logo.is-loaded { opacity: 1; }
+.store-splash-initial {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: 4rem;
+  color: #c8102e;
+}
+.store-splash-name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.45em;
+  text-transform: uppercase;
+  color: #fff4e4;
+  padding-left: 0.45em;
+  opacity: 0.9;
+}
+.store-splash-spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--s);
+  height: var(--s);
+  margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+  border-radius: 9999px;
+  background: #fff6e6;
+  box-shadow: 0 0 8px 2px rgba(255, 199, 44, 0.9);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* abertura completa */
+  /* duas voltas completas acelerando e freando; ao fechar, explode */
+  .store-splash.is-intro .ms-spin {
+    animation: ms-spin-in 2s cubic-bezier(0.5, 0, 0.3, 1) both, ms-fade-out 0.3s ease 1.92s both;
+  }
+  .store-splash.is-intro .ms-full { animation: ms-full 1.05s ease 1.92s both; }
+  .store-splash.is-intro .ms-halo { animation: ms-flash 1.05s ease-out 1.95s both; }
+  .store-splash.is-intro .ms-wave { animation: ms-wave 0.95s cubic-bezier(0.15, 0.6, 0.3, 1) 1.98s both; }
+  .store-splash.is-intro .ms-wave-2 { animation-delay: 2.12s; }
+  .store-splash.is-intro .ms-ring { animation: ms-shake 0.4s ease-out 1.97s both; }
+  .store-splash.is-intro .store-splash-disc { animation: ms-disc 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.7s both; }
+  .store-splash.is-intro .store-splash-name { animation: ms-name 0.8s ease 1.8s both; }
+  .store-splash-spark { animation: store-spark 1s cubic-bezier(0.15, 0.7, 0.3, 1) both; }
+  .store-splash .ms-thin { animation: ms-rev 3.2s linear infinite; }
+  /* carregando (visitas seguintes): o cometa fica girando */
+  .store-splash.is-loader .ms-spin { animation: ms-loop 1s linear infinite; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .store-splash .ms-full { opacity: 1; }
+  .store-splash .ms-spin { opacity: 0; }
+}
+
+@keyframes ms-spin-in {
+  from { transform: rotate(-90deg); }
+  to { transform: rotate(630deg); }
+}
+/* anel completo: acende forte na explosão e assenta */
+@keyframes ms-full {
+  0% { opacity: 0; transform: scale(1); }
+  20% { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes ms-wave {
+  0% { opacity: 0.95; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2.3); }
+}
+@keyframes ms-shake {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+@keyframes ms-loop {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes ms-rev {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+@keyframes ms-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ms-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes ms-flash {
+  0% { opacity: 0; transform: scale(0.8); }
+  22% { opacity: 1; transform: scale(1.35); }
+  100% { opacity: 0; transform: scale(2.1); }
+}
+@keyframes ms-disc {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes ms-name {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 0.9; transform: translateY(0); }
+}
+@keyframes store-spark {
+  0% { opacity: 0; transform: rotate(var(--a)) translateY(-112px) scale(1.4); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(calc(-112px - var(--d))) scale(0.2); }
+}
+
+/* ---------------------------------------------------------------------------
+   Loja pública: efeitos extras (brilho periódico, esqueleto das fotos,
+   saída das janelas, textura do fundo, 3D)
+   --------------------------------------------------------------------------- */
+
+/* Botão "Adicionar": um reflexo de luz passa sozinho de tempos em tempos,
+   em momentos diferentes em cada card (para não piscar tudo junto). */
+.store-fx .fx-gleam::before {
+  background: linear-gradient(110deg, transparent 32%, rgba(255, 255, 255, 0.55) 50%, transparent 68%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .store-fx .fx-gleam::before {
+    animation: fx-gleam 6.5s ease-in-out infinite;
+  }
+  .store-fx .fx-gleam:hover::before {
+    animation: fx-sweep 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .store-fx article:nth-child(3n + 1) .fx-gleam::before { animation-delay: 1.2s; }
+  .store-fx article:nth-child(3n + 2) .fx-gleam::before { animation-delay: 3.1s; }
+  .store-fx :nth-child(4n + 2) > article .fx-gleam::before { animation-delay: 2.2s; }
+  .store-fx :nth-child(4n + 3) > article .fx-gleam::before { animation-delay: 4.4s; }
+  .store-fx :nth-child(4n) > article .fx-gleam::before { animation-delay: 0.6s; }
+}
+@keyframes fx-gleam {
+  0%, 78% { transform: translateX(-130%); }
+  92%, 100% { transform: translateX(130%); }
+}
+
+/* Esqueleto das fotos: brilho passando enquanto a foto do card carrega
+   (só transform, roda na placa de vídeo sem pesar na rolagem). */
+.store-fx .fx-img-skel::before {
+  content: "";
+  position: absolute;
+  inset: 0 -100%;
+  z-index: 0;
+  opacity: 0;
+  background: linear-gradient(100deg, transparent 35%, rgba(255, 255, 255, 0.4) 50%, transparent 65%);
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+.store-fx.fx-ready .fx-img-skel:has(img:not(.is-loaded))::before {
+  opacity: 1;
+  animation: fx-skel 1.3s linear infinite;
+}
+@keyframes fx-skel {
+  from { transform: translateX(-35%); }
+  to { transform: translateX(35%); }
+}
+
+/* Janela do produto: saída suave ao fechar. */
+.fx-fade-out {
+  animation: fx-fade-out 0.2s ease forwards;
+}
+.fx-sheet-out {
+  animation: fx-sheet-out 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes fx-fade-out {
+  to { opacity: 0; }
+}
+@keyframes fx-sheet-out {
+  to { opacity: 0; transform: translateY(36px) scale(0.98); }
+}
+
+/* Troca de categoria / ordem no catálogo: a grade inteira entra de novo. */
+.store-fx .fx-grid-in {
+  animation: fx-grid-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes fx-grid-in {
+  from { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+/* Selos e prazo: leve destaque ao passar o mouse. */
+.store-fx .fx-badge {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s ease, border-color 0.35s ease;
+}
+@media (hover: hover) {
+  .store-fx .fx-badge:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    box-shadow: 0 14px 30px -18px var(--accent);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fx-cube-spin {
+    display: inline-block;
+    animation: fx-cube 1.6s linear infinite;
+  }
+}
+@keyframes fx-cube {
+  to { transform: rotate(360deg); }
+}
+
+/* Textura do fundo: grão leve (ruído) e um calor suave no alto da página. */
+.store-fx.fx-texture {
+  isolation: isolate;
+}
+/* Camada própria, parada atrás do conteúdo: rolar a página não repinta a
+   textura (fundo "fixed" no próprio elemento fazia o celular redesenhar
+   tudo a cada movimento e a rolagem agarrava). */
+.store-fx.fx-texture::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1100px 500px at 15% -10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.36 0 0 0 0 0.22 0 0 0 0 0.12 0 0 0 0.11 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Celular: sem desfoque de fundo nos selinhos sobre as fotos dos cards (cada
+   um obrigava o navegador a redesenhar a foto embaixo durante a rolagem). */
+@media (hover: none) {
+  .store-fx main article [class~="backdrop-blur"] {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (hover: none) {
+  /* Cabeçalho fixo sem desfoque no celular: o desfoque era recalculado a
+     cada quadro da rolagem. Fundo quase sólido no lugar. */
+  .store-fx .fx-header {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: color-mix(in srgb, var(--surface) 97%, transparent);
+  }
+  /* Fotos entram só com fade (sem desfoque animado) enquanto se rola. */
+  .store-fx.fx-ready main img:not(.is-loaded) {
+    filter: none;
+  }
+  .store-fx.fx-ready main img {
+    transition: opacity 0.5s ease, transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Tema Winner Cakes: calor de forno no alto, granulado colorido bem leve nas
+   laterais e calda de chocolate escorrendo na borda do rodapé vermelho.
+   --------------------------------------------------------------------------- */
+.store-fx.fx-texture[data-theme^="winner"]::before {
+  background-image:
+    radial-gradient(900px 480px at 85% -14%, rgba(255, 199, 44, 0.22), transparent 70%),
+    radial-gradient(1000px 520px at 5% -10%, rgba(200, 16, 46, 0.10), transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.45 0 0 0 0 0.2 0 0 0 0 0.12 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.store-fx[data-theme="winner-noite"].fx-texture::before {
+  background-image:
+    radial-gradient(900px 480px at 85% -14%, rgba(200, 16, 46, 0.18), transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.8 0 0 0 0 0.7 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* Borda do rodapé em "calda escorrendo" na cor do rodapé. */
+.store-fx[data-theme^="winner"] .fx-footer {
+  border-top-color: transparent;
+  margin-top: 64px;
+}
+.store-fx[data-theme^="winner"] .fx-footer::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% - 1px);
+  height: 64px;
+  background: var(--footer-bg);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 64' preserveAspectRatio='none'%3E%3Cpath d='M0 64V40c40 0 60 12 90 12s30-30 70-30 50 34 90 34 40-22 80-22 40 16 80 16 60-36 100-36 50 30 90 30 40-20 80-20 50 26 90 26 40-30 80-30 60 34 100 34 40-24 80-24 50 18 90 18 50-28 90-28 40 22 80 22 40-12 80-12v42z'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 64' preserveAspectRatio='none'%3E%3Cpath d='M0 64V40c40 0 60 12 90 12s30-30 70-30 50 34 90 34 40-22 80-22 40 16 80 16 60-36 100-36 50 30 90 30 40-20 80-20 50 26 90 26 40-30 80-30 60 34 100 34 40-24 80-24 50 18 90 18 50-28 90-28 40 22 80 22 40-12 80-12v42z'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  pointer-events: none;
+}
+/* Palavras de destaque dos títulos no vermelho da marca. */
+.store-fx[data-theme="winner"] h2 em,
+.store-fx[data-theme="winner"] h1 em {
+  color: #c8102e;
+}
+
+/* Granulado (confeitos) bem esmaecido nas laterais, como numa cobertura. */
+.store-fx .fx-sprinkles {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cg stroke-linecap='round' stroke-width='7'%3E%3Cpath d='M30 40l14 8' stroke='%23c8102e'/%3E%3Cpath d='M120 30l-6 15' stroke='%23ffc72c'/%3E%3Cpath d='M200 70l15 3' stroke='%23e0314b'/%3E%3Cpath d='M60 130l4-15' stroke='%235f8a3c'/%3E%3Cpath d='M160 150l14 7' stroke='%23d94f8c'/%3E%3Cpath d='M230 200l-12 9' stroke='%23c8102e'/%3E%3Cpath d='M90 220l15-2' stroke='%23ffc72c'/%3E%3Cpath d='M20 230l8-13' stroke='%234a2418'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: repeat-y, repeat-y;
+  background-position: left -120px top 420px;
+  background-size: 260px 260px;
+  opacity: 0.18;
+  -webkit-mask: linear-gradient(90deg, #000 0, transparent 160px, transparent calc(100% - 160px), #000 100%);
+  mask: linear-gradient(90deg, #000 0, transparent 160px, transparent calc(100% - 160px), #000 100%);
+  background-repeat: repeat;
+}
+.store-fx[data-theme$="noite"] .fx-sprinkles,
+.store-fx[data-theme="dark"] .fx-sprinkles {
+  opacity: 0.1;
+}
+@media (max-width: 768px) {
+  .store-fx .fx-sprinkles {
+    opacity: 0.12;
+    -webkit-mask: linear-gradient(90deg, #000 0, transparent 60px, transparent calc(100% - 60px), #000 100%);
+    mask: linear-gradient(90deg, #000 0, transparent 60px, transparent calc(100% - 60px), #000 100%);
+  }
+}
+
+/* Caixas de marcar, rádios e barras do gestor no vermelho da marca. */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: #c8102e;
+}

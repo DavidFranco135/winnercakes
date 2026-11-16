@@ -1,0 +1,405 @@
+import unicodedata
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from src.application.calculator.use_cases import get_cost_profile
+from src.application.inventory.use_cases import get_material
+from src.application.machines.use_cases import get_machine
+from src.domain.calculator.engine import calculate_quote
+from src.domain.calculator.inputs import QuoteInputs
+from src.domain.calculator.profile import CostProfileValues
+from src.domain.calculator.report import CostBreakdown
+from src.domain.shared.exceptions import ProductNotFoundError, ProductWithoutPriceError
+from src.infrastructure.db.models import Product
+from src.infrastructure.repositories import (
+    MachineRepository,
+    MaterialRepository,
+    ProductMaterialRepository,
+    ProductRepository,
+    QuoteRepository,
+)
+
+
+def create_product(
+    db: Session,
+    *,
+    organization_id: UUID,
+    name: str,
+    description: str | None,
+    print_time_hours: float | None,
+    machine_id: UUID | None,
+    manual_price: float | None = None,
+    size: str | None = None,
+    photo_urls: list[str] | None = None,
+    stock_quantity: int | None = None,
+    materials: list[dict],
+) -> Product:
+    """`materials` is a list of {"material_id": UUID, "quantity_g": float} —
+
+    the product's bill of materials (BOM): how much of each raw material one
+    unit consumes. Validated against the org's own material/machine catalog
+    so a product can never reference another org's rows or a typo'd id.
+
+    `manual_price` is the escape hatch for a "simple" product: just a name
+    and a fixed sale price, no machine/BOM/cost-profile needed. When set,
+    `compute_product_cost` returns it directly instead of running the BOM
+    through the pricing formula.
+    """
+    if machine_id is not None:
+        get_machine(db, organization_id=organization_id, machine_id=machine_id)
+    for line in materials:
+        get_material(db, organization_id=organization_id, material_id=line["material_id"])
+
+    product = ProductRepository(db).create(
+        organization_id=organization_id,
+        name=name,
+        description=description,
+        print_time_hours=print_time_hours,
+        machine_id=machine_id,
+        manual_price=manual_price,
+        size=size,
+        photo_urls=photo_urls,
+        stock_quantity=stock_quantity,
+    )
+    material_repo = ProductMaterialRepository(db)
+    for line in materials:
+        material_repo.create(
+            organization_id=organization_id,
+            product_id=product.id,
+            material_id=line["material_id"],
+            quantity_g=line["quantity_g"],
+        )
+    db.commit()
+    return product
+
+
+def list_products(db: Session, *, organization_id: UUID) -> list[Product]:
+    return ProductRepository(db).list_for_org(organization_id)
+
+
+def get_product(db: Session, *, organization_id: UUID, product_id: UUID) -> Product:
+    product = ProductRepository(db).get(organization_id, product_id)
+    if product is None:
+        raise ProductNotFoundError(str(product_id))
+    return product
+
+
+def list_products_materials(
+    db: Session, *, organization_id: UUID, product_ids: list[UUID]
+) -> dict[UUID, list[dict]]:
+    """BOM lines of many products at once (one query, not one per product)."""
+    lines_by_product = ProductMaterialRepository(db).list_for_products(organization_id, product_ids)
+    return {
+        pid: [{"material_id": line.material_id, "quantity_g": line.quantity_g} for line in lines]
+        for pid, lines in lines_by_product.items()
+    }
+
+
+def list_product_materials(
+    db: Session, *, organization_id: UUID, product_id: UUID
+) -> list[dict]:
+    lines = ProductMaterialRepository(db).list_for_product(organization_id, product_id)
+    return [{"material_id": line.material_id, "quantity_g": line.quantity_g} for line in lines]
+
+
+CLEARABLE_PRODUCT_FIELDS = frozenset(
+    {"manual_price", "stock_quantity", "print_time_hours", "machine_id", "size", "description"}
+)
+
+
+def update_product(
+    db: Session,
+    *,
+    organization_id: UUID,
+    product_id: UUID,
+    name: str | None,
+    description: str | None,
+    print_time_hours: float | None,
+    machine_id: UUID | None,
+    manual_price: float | None = None,
+    size: str | None = None,
+    photo_urls: list[str] | None = None,
+    photo_focus: list[dict] | None = None,
+    stock_quantity: int | None = None,
+    materials: list[dict] | None,
+    clear: frozenset[str] = frozenset(),
+) -> Product:
+    """`clear` lists optional fields the caller explicitly sent as null —
+    those are set to None (e.g. a product switched back from a manual price
+    to the calculated one, or stock no longer tracked). Any other None still
+    means "don't touch".
+
+    `materials`, when provided, fully replaces the product's BOM (the
+
+    frontend always sends the complete, current list of lines — there is no
+    partial line-level update). `photo_urls` works the same way — `None`
+    means "don't touch", an (even empty) list replaces it wholesale, which
+    is how the catalog's photo viewer adds/removes individual photos.
+    """
+    product = get_product(db, organization_id=organization_id, product_id=product_id)
+    if name is not None:
+        product.name = name
+    if description is not None:
+        product.description = description
+    if print_time_hours is not None:
+        product.print_time_hours = print_time_hours
+    if machine_id is not None:
+        get_machine(db, organization_id=organization_id, machine_id=machine_id)
+        product.machine_id = machine_id
+    if manual_price is not None:
+        product.manual_price = manual_price
+    if size is not None:
+        product.size = size
+    if photo_urls is not None:
+        product.photo_urls = photo_urls
+    if photo_focus is not None:
+        product.photo_focus = photo_focus
+    if stock_quantity is not None:
+        product.stock_quantity = stock_quantity
+    for field_name in clear & CLEARABLE_PRODUCT_FIELDS:
+        setattr(product, field_name, None)
+    if materials is not None:
+        for line in materials:
+            get_material(db, organization_id=organization_id, material_id=line["material_id"])
+        material_repo = ProductMaterialRepository(db)
+        material_repo.delete_for_product(organization_id, product.id)
+        for line in materials:
+            material_repo.create(
+                organization_id=organization_id,
+                product_id=product.id,
+                material_id=line["material_id"],
+                quantity_g=line["quantity_g"],
+            )
+    db.commit()
+    return product
+
+
+def delete_product(db: Session, *, organization_id: UUID, product_id: UUID) -> None:
+    product = get_product(db, organization_id=organization_id, product_id=product_id)
+    ProductRepository(db).soft_delete(product)
+    db.commit()
+
+
+def _manual_price_breakdown(manual_price: float) -> CostBreakdown:
+    """A "simple" product (name + fixed price, no BOM/machine/cost profile)
+
+    skips the pricing formula entirely — the manual price IS the sale price.
+    """
+    return CostBreakdown(
+        material_cost=0.0,
+        waste_cost=0.0,
+        energy_cost=0.0,
+        machine_cost=0.0,
+        labor_cost=0.0,
+        packaging_cost=0.0,
+        fees=0.0,
+        production_cost=manual_price,
+        tax_amount=0.0,
+        suggested_price=manual_price,
+        source="manual",
+    )
+
+
+def normalize_name(name: str | None) -> str:
+    """Nome para comparar produto x peça: sem acentos, maiúsculas nem espaços
+    sobrando ("SNOOP E CASA " == "Snoop e Casa")."""
+    text = unicodedata.normalize("NFD", name or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return " ".join(text.lower().split())
+
+
+def pieces_by_name(db: Session, organization_id: UUID) -> dict[str, object]:
+    """Peças salvas na Precificação, pelo nome (a mais recente vale)."""
+    pieces: dict[str, object] = {}
+    quotes = [
+        q
+        for q in QuoteRepository(db).list_for_org(organization_id)
+        if (q.piece_name or "").strip()
+    ]
+    for quote in sorted(quotes, key=lambda q: q.created_at):
+        pieces[normalize_name(quote.piece_name)] = quote
+    return pieces
+
+
+_BREAKDOWN_FIELDS = (
+    "material_cost",
+    "waste_cost",
+    "energy_cost",
+    "machine_cost",
+    "labor_cost",
+    "packaging_cost",
+    "fees",
+    "production_cost",
+    "tax_amount",
+)
+
+
+def _pricing_breakdown(quote) -> CostBreakdown:
+    """Preço do produto vindo da peça da Precificação: a conta completa dela
+    (energia, itens adicionais, mão de obra, depreciação e margem da peça), e o
+    preço final digitado na peça quando houver."""
+    snapshot = quote.cost_breakdown_snapshot or {}
+    values = {name: float(snapshot.get(name) or 0.0) for name in _BREAKDOWN_FIELDS}
+    values["production_cost"] = float(quote.production_cost or values["production_cost"])
+    price = quote.final_price if quote.final_price is not None else quote.suggested_price
+    return CostBreakdown(**values, suggested_price=float(price), source="pricing")
+
+
+def _profile_values(profile) -> CostProfileValues:
+    return CostProfileValues(
+        energy_cost_per_kwh=profile.energy_cost_per_kwh,
+        labor_cost_per_hour=profile.labor_cost_per_hour,
+        packaging_cost_flat=profile.packaging_cost_flat,
+        waste_percentage=profile.waste_percentage,
+        fees_percentage=profile.fees_percentage,
+        profit_margin_percentage=profile.profit_margin_percentage,
+        tax_percentage=profile.tax_percentage or 0.0,
+    )
+
+
+def compute_product_cost(
+    db: Session,
+    *,
+    organization_id: UUID,
+    product_id: UUID,
+    cost_profile_id: UUID,
+    energy_kwh: float | None = None,
+    labor_hours: float = 0.0,
+) -> CostBreakdown:
+    """Sums the product's BOM against each material's cost_per_kg to get
+
+    material_cost, then runs it through the same deterministic pricing
+    engine the standalone calculator uses (domain/calculator/engine.py) —
+    one formula, one source of truth, whether the material cost was typed
+    by hand or derived from a product's recipe. A product with a
+    manual_price (a "simple" product with no BOM) skips this entirely.
+    """
+    product = get_product(db, organization_id=organization_id, product_id=product_id)
+    if product.manual_price is not None:
+        return _manual_price_breakdown(product.manual_price)
+
+    piece = pieces_by_name(db, organization_id).get(normalize_name(product.name))
+    if piece is not None:
+        return _pricing_breakdown(piece)
+
+    profile = get_cost_profile(db, organization_id=organization_id, cost_profile_id=cost_profile_id)
+
+    bom = ProductMaterialRepository(db).list_for_product(organization_id, product.id)
+    if not has_recipe(product, bom):
+        raise ProductWithoutPriceError(
+            "Este produto não tem preço: defina o preço de venda ou cadastre a receita "
+            "(materiais ou tempo de impressão)."
+        )
+
+    material_cost = 0.0
+    for line in bom:
+        material = get_material(db, organization_id=organization_id, material_id=line.material_id)
+        cost_per_kg = material.cost_per_kg or 0.0
+        material_cost += (line.quantity_g / 1000.0) * cost_per_kg
+
+    machine = (
+        get_machine(db, organization_id=organization_id, machine_id=product.machine_id)
+        if product.machine_id is not None
+        else None
+    )
+    machine_cost_per_hour = (machine.cost_per_hour or 0.0) if machine else 0.0
+
+    print_time_hours = product.print_time_hours or 0.0
+
+    return calculate_quote(
+        QuoteInputs(
+            material_cost=material_cost,
+            print_time_hours=print_time_hours,
+            machine_cost_per_hour=machine_cost_per_hour,
+            energy_kwh=(
+                energy_kwh
+                if energy_kwh is not None
+                else product_energy_kwh(machine, print_time_hours)
+            ),
+            labor_hours=labor_hours,
+        ),
+        _profile_values(profile),
+    )
+
+
+def product_energy_kwh(machine, print_time_hours: float) -> float:
+    """Energia gasta na impressão, igual à Precificação: potência da máquina
+    (W) / 1000 × horas. Antes ficava sempre 0 aqui, e o preço calculado do
+    produto saía menor que o da Precificação para a mesma peça."""
+    power_watts = getattr(machine, "power_watts", None) if machine else None
+    if not power_watts or print_time_hours <= 0:
+        return 0.0
+    return (power_watts / 1000.0) * print_time_hours
+
+
+def has_recipe(product, bom_lines) -> bool:
+    """Há algo de produção para precificar? Sem materiais nem tempo de
+    impressão, a fórmula daria só embalagem + taxas + margem (ex.: R$ 2,50) —
+    um preço que ninguém definiu. Esses produtos ficam sem preço calculado."""
+    return bool(bom_lines) or (product.print_time_hours or 0) > 0
+
+
+def list_products_costs(
+    db: Session,
+    *,
+    organization_id: UUID,
+    cost_profile_id: UUID,
+    products: list | None = None,
+) -> dict[UUID, CostBreakdown]:
+    """Same formula as `compute_product_cost`, but for every product in the
+
+    org in one pass — one cost-profile fetch, one materials/machines list
+    (not one query per product per BOM line), instead of the frontend
+    firing a separate request per product (which used to make the Produtos
+    page noticeably slow once there were more than a handful of products).
+    """
+    profile = get_cost_profile(db, organization_id=organization_id, cost_profile_id=cost_profile_id)
+    profile_values = _profile_values(profile)
+
+    if products is None:
+        products = ProductRepository(db).list_for_org(organization_id)
+    materials_by_id = {m.id: m for m in MaterialRepository(db).list_for_org(organization_id)}
+    machines_by_id = {m.id: m for m in MachineRepository(db).list_for_org(organization_id)}
+    # Todas as receitas de uma vez — uma consulta por produto deixava a loja
+    # pública levando segundos para abrir.
+    boms = ProductMaterialRepository(db).list_for_products(
+        organization_id, [p.id for p in products if p.manual_price is None]
+    )
+    pieces = pieces_by_name(db, organization_id)
+
+    result: dict[UUID, CostBreakdown] = {}
+    for product in products:
+        if product.manual_price is not None:
+            result[product.id] = _manual_price_breakdown(product.manual_price)
+            continue
+
+        piece = pieces.get(normalize_name(product.name))
+        if piece is not None:
+            result[product.id] = _pricing_breakdown(piece)
+            continue
+
+        if not has_recipe(product, boms.get(product.id, [])):
+            continue
+
+        material_cost = 0.0
+        for line in boms.get(product.id, []):
+            material = materials_by_id.get(line.material_id)
+            cost_per_kg = (material.cost_per_kg if material else 0.0) or 0.0
+            material_cost += (line.quantity_g / 1000.0) * cost_per_kg
+
+        machine = machines_by_id.get(product.machine_id) if product.machine_id else None
+        machine_cost_per_hour = (machine.cost_per_hour or 0.0) if machine else 0.0
+        print_time_hours = product.print_time_hours or 0.0
+
+        result[product.id] = calculate_quote(
+            QuoteInputs(
+                material_cost=material_cost,
+                print_time_hours=print_time_hours,
+                machine_cost_per_hour=machine_cost_per_hour,
+                energy_kwh=product_energy_kwh(machine, print_time_hours),
+                labor_hours=0.0,
+            ),
+            profile_values,
+        )
+    return result

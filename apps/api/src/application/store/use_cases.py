@@ -1,0 +1,238 @@
+import time
+from datetime import datetime
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from sqlalchemy.orm import Session
+
+from src.application.products.use_cases import list_products_costs
+from src.domain.shared.exceptions import OrganizationNotFoundError
+from src.infrastructure.repositories import (
+    CostProfileRepository,
+    OrganizationRepository,
+    ProductRepository,
+)
+from src.interfaces.http.v1.schemas import (
+    PublicCategory,
+    PublicProduct,
+    PublicStoreResponse,
+    PublicStoreSettings,
+    StoreAdminResponse,
+    StoreSettings,
+)
+
+_PUBLIC_CACHE_TTL_SECONDS = 30.0
+_public_cache: dict[str, tuple[float, PublicStoreResponse]] = {}
+
+
+def _load_settings(raw: dict | None) -> StoreSettings:
+    try:
+        return StoreSettings.model_validate((raw or {}).get("store") or {})
+    except ValueError:
+        return StoreSettings()
+
+
+def get_store_settings(db: Session, *, organization_id: UUID) -> StoreAdminResponse:
+    org = OrganizationRepository(db).get_by_id(organization_id)
+    if org is None:
+        raise OrganizationNotFoundError(str(organization_id))
+    return StoreAdminResponse(
+        slug=org.slug, name=org.name, settings=_load_settings(org.settings)
+    )
+
+
+def save_store_settings(
+    db: Session, *, organization_id: UUID, settings: StoreSettings
+) -> StoreAdminResponse:
+    org = OrganizationRepository(db).get_by_id(organization_id)
+    if org is None:
+        raise OrganizationNotFoundError(str(organization_id))
+    # Reassign the whole dict so SQLAlchemy sees the JSON column as changed.
+    org.settings = {**(org.settings or {}), "store": settings.model_dump()}
+    db.commit()
+    _public_cache.pop(org.slug, None)
+    return StoreAdminResponse(slug=org.slug, name=org.name, settings=settings)
+
+
+def hide_product_in_store(db: Session, *, organization_id: UUID, product_id: UUID) -> None:
+    """Deixa o produto oculto na vitrine pública (o lojista publica depois, à mão)."""
+    org = OrganizationRepository(db).get_by_id(organization_id)
+    if org is None:
+        raise OrganizationNotFoundError(str(organization_id))
+    settings = _load_settings(org.settings)
+    pid = str(product_id)
+    if pid in settings.hidden_product_ids:
+        return
+    settings.hidden_product_ids = [*settings.hidden_product_ids, pid]
+    org.settings = {**(org.settings or {}), "store": settings.model_dump()}
+    db.commit()
+    _public_cache.pop(org.slug, None)
+
+
+_BRT = ZoneInfo("America/Sao_Paulo")
+
+
+def _today_brt() -> str:
+    return datetime.now(_BRT).date().isoformat()
+
+
+def _active_promo_percent(settings) -> float:
+    """Porcentagem da promoção geral se ela vale hoje (horário de Brasília)."""
+    if settings.promo_percent <= 0:
+        return 0.0
+    today = datetime.now(_BRT).date().isoformat()
+    if settings.promo_start and today < settings.promo_start:
+        return 0.0
+    if settings.promo_end and today > settings.promo_end:
+        return 0.0
+    return float(settings.promo_percent)
+
+
+def get_public_store(db: Session, *, slug: str) -> PublicStoreResponse:
+    cached = _public_cache.get(slug)
+    if cached is not None and time.monotonic() - cached[0] < _PUBLIC_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    org = OrganizationRepository(db).get_by_slug(slug)
+    if org is None:
+        raise OrganizationNotFoundError(slug)
+    settings = _load_settings(org.settings)
+
+    hidden_ids = set(settings.hidden_product_ids)
+    all_products = ProductRepository(db).list_for_org(org.id)
+    # Ordem personalizada (Minha Loja → Produtos). Quem não está na lista
+    # (produto novo) vai para o fim, mantendo a ordem de cadastro (sort estável).
+    order_index = {pid: i for i, pid in enumerate(settings.product_order)}
+    unlisted = len(order_index)
+    visible_products = sorted(
+        (p for p in all_products if p.is_active and str(p.id) not in hidden_ids),
+        key=lambda p: order_index.get(str(p.id), unlisted),
+    )
+    default_profile = CostProfileRepository(db).get_default(org.id)
+    computed = (
+        list_products_costs(
+            db,
+            organization_id=org.id,
+            cost_profile_id=default_profile.id,
+            products=visible_products,
+        )
+        if default_profile is not None
+        else {}
+    )
+
+    featured = set(settings.featured_product_ids)
+    visible_ids = {str(p.id) for p in visible_products}
+    # Destaques visíveis na ordem escolhida pelo lojista (sem repetidos).
+    featured_ordered = [
+        pid
+        for pid in dict.fromkeys(settings.featured_product_ids)
+        if pid in visible_ids
+    ]
+    on_request = set(settings.price_on_request_product_ids)
+    named_categories = [c for c in settings.categories if c.name.strip()]
+    categories_of: dict[str, list[str]] = {}
+    for category in named_categories:
+        for product_id in category.product_ids:
+            categories_of.setdefault(product_id, []).append(category.id)
+    promo = _active_promo_percent(settings)
+    excluded = set(settings.promo_excluded_ids)
+    products: list[PublicProduct] = []
+    for product in visible_products:
+        if product.manual_price is not None:
+            price = product.manual_price
+        elif product.id in computed:
+            price = computed[product.id].suggested_price
+        else:
+            # Sem preço definido nem receita para calcular: aparece como
+            # "Preço a consultar" em vez de sumir da loja.
+            price = None
+        stock = product.stock_quantity
+        hide_price = str(product.id) in on_request or price is None or price <= 0
+        price = price or 0.0
+        products.append(
+            PublicProduct(
+                id=product.id,
+                name=product.name,
+                description=product.description,
+                size=product.size,
+                photo_urls=list(product.photo_urls or []),
+                photo_focus=list(product.photo_focus or []),
+                price=0.0 if hide_price else round(float(price), 2),
+                stock_quantity=stock,
+                available=stock is None or stock > 0,
+                featured=str(product.id) in featured,
+                category_ids=categories_of.get(str(product.id), []),
+                price_on_request=hide_price,
+                model_url=settings.model_urls.get(str(product.id), ""),
+                discount_percent=0.0
+                if hide_price
+                else max(
+                    0.0 if str(product.id) in excluded else promo,
+                    settings.product_discounts.get(str(product.id), 0.0),
+                ),
+                promo_excluded=str(product.id) in excluded,
+            )
+        )
+
+    # Só categorias com algum produto visível — categoria vazia na vitrine
+    # leva o cliente a uma lista sem nada.
+    used = {cid for p in products for cid in p.category_ids}
+    # Uma categoria principal também aparece quando só as subcategorias dela têm produto.
+    used |= {c.parent_id for c in named_categories if c.parent_id and c.id in used}
+    named_ids = {c.id for c in named_categories}
+    public_categories = [
+        PublicCategory(
+            id=c.id,
+            name=c.name.strip(),
+            cover_url=c.cover_url.strip(),
+            cover_x=c.cover_x,
+            cover_y=c.cover_y,
+            parent_id=c.parent_id if c.parent_id in named_ids else "",
+        )
+        for c in named_categories
+        if c.id in used
+    ]
+
+    response = PublicStoreResponse(
+        slug=org.slug,
+        name=org.name,
+        settings=PublicStoreSettings(
+            display_name=settings.display_name or org.name,
+            logo_url=settings.logo_url,
+            tagline=settings.tagline,
+            about=settings.about,
+            whatsapp=settings.whatsapp,
+            instagram=settings.instagram,
+            hours=settings.hours,
+            address=settings.address,
+            accent=settings.accent,
+            theme=settings.theme,
+            slides=settings.slides,
+            highlights=settings.highlights,
+            reels=settings.reels,
+            categories=public_categories,
+            featured_product_ids=featured_ordered,
+            auto_dark=settings.auto_dark,
+            trust_badges=settings.trust_badges,
+            production_days=settings.production_days,
+            promo_percent=promo,
+            promo_label=settings.promo_label if promo else "",
+            promo_end=settings.promo_end if promo else "",
+            cart_tiers=sorted(settings.cart_tiers, key=lambda t: t.min_total),
+            discounts_stack=settings.discounts_stack,
+            background_style=settings.background_style,
+            background_url=settings.background_url,
+            background_opacity=settings.background_opacity,
+            background_header=settings.background_header,
+            installments_max=settings.installments_max,
+            installments_min=settings.installments_min,
+            festivals=sorted(
+                (f for f in settings.festivals if f.date >= _today_brt()),
+                key=lambda f: (f.date, f.time),
+            ),
+            locations=settings.locations,
+        ),
+        products=products,
+    )
+    _public_cache[slug] = (time.monotonic(), response)
+    return response

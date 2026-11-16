@@ -1,0 +1,471 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from src.application.store import use_cases as store_use_cases
+from tests.api.conftest import auth_headers, register_user
+
+
+@pytest.fixture(autouse=True)
+def _clear_public_cache():
+    store_use_cases._public_cache.clear()
+
+
+def _setup(client: TestClient):
+    owner = register_user(client, organization_name="Atelie 3D", email="owner@atelie.io")
+    headers = auth_headers(owner["access_token"])
+    org = client.get("/api/v1/organizations", headers=headers).json()[0]
+    return org["id"], org["slug"], headers
+
+
+def _product(client: TestClient, org_id: str, headers: dict, **overrides) -> dict:
+    payload = {"name": "Chaveiro", "manual_price": 12.5, "materials": []}
+    payload.update(overrides)
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/products", json=payload, headers=headers
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_store_settings_default_and_save(client: TestClient):
+    org_id, _slug, headers = _setup(client)
+
+    response = client.get(f"/api/v1/organizations/{org_id}/store", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["settings"]["whatsapp"] == "5521984986236"
+
+    payload = {
+        "display_name": "Atelie 3D Premium",
+        "tagline": "Peças únicas",
+        "accent": "emerald",
+        "theme": "dark",
+        "slides": [{"url": "https://img/1.jpg", "title": "Oi", "subtitle": "Olá"}],
+    }
+    response = client.put(f"/api/v1/organizations/{org_id}/store", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["settings"]["accent"] == "emerald"
+
+    saved = client.get(f"/api/v1/organizations/{org_id}/store", headers=headers).json()
+    assert saved["settings"]["slides"][0]["title"] == "Oi"
+
+
+def test_public_store_lists_priced_products_without_auth(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    _product(client, org_id, headers, name="Chaveiro", manual_price=12.5, photo_urls=["https://img/a.jpg"])
+    _product(client, org_id, headers, name="Esgotado", manual_price=30, stock_quantity=0)
+    # Sem preço manual nem receita: aparece como "Preço a consultar" (não some).
+    _product(client, org_id, headers, name="Sem preco", manual_price=None)
+
+    response = client.get(f"/api/v1/public/stores/{slug}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["settings"]["display_name"] == "Atelie 3D"
+    by_name = {p["name"]: p for p in body["products"]}
+    assert set(by_name) == {"Chaveiro", "Esgotado", "Sem preco"}
+    assert by_name["Sem preco"]["price_on_request"] is True
+    assert by_name["Sem preco"]["price"] == 0.0
+    assert by_name["Chaveiro"]["price"] == 12.5
+    assert by_name["Chaveiro"]["available"] is True
+    assert by_name["Esgotado"]["available"] is False
+    assert "cost" not in str(body).lower()
+
+
+def test_public_store_hides_products_and_flags_featured(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    visible = _product(client, org_id, headers, name="Visivel")
+    hidden = _product(client, org_id, headers, name="Oculto")
+
+    response = client.put(
+        f"/api/v1/organizations/{org_id}/store",
+        json={"hidden_product_ids": [hidden["id"]], "featured_product_ids": [visible["id"]]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert [p["name"] for p in body["products"]] == ["Visivel"]
+    assert body["products"][0]["featured"] is True
+
+
+def test_public_store_unknown_slug_is_404(client: TestClient):
+    assert client.get("/api/v1/public/stores/nao-existe").status_code == 404
+
+
+def test_store_settings_require_membership(client: TestClient):
+    org_id, _slug, _headers = _setup(client)
+    other = register_user(client, organization_name="Outra", email="other@x.io")
+    response = client.put(
+        f"/api/v1/organizations/{org_id}/store",
+        json={},
+        headers=auth_headers(other["access_token"]),
+    )
+    assert response.status_code in (401, 403, 404)
+
+
+def test_photo_focus_is_saved_and_exposed_publicly(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    product = _product(client, org_id, headers, photo_urls=["https://img/a.jpg"])
+    focus = [{"url": "https://img/a.jpg", "x": 30.5, "y": 80}]
+
+    response = client.patch(
+        f"/api/v1/organizations/{org_id}/products/{product['id']}",
+        json={"photo_focus": focus},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["photo_focus"] == [{"url": "https://img/a.jpg", "x": 30.5, "y": 80.0}]
+
+    store = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert store["products"][0]["photo_focus"][0]["y"] == 80.0
+
+    bad = client.patch(
+        f"/api/v1/organizations/{org_id}/products/{product['id']}",
+        json={"photo_focus": [{"url": "u", "x": 120, "y": 0}]},
+        headers=headers,
+    )
+    assert bad.status_code == 422
+
+
+def test_categories_are_saved_and_exposed_publicly(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    vaso = _product(client, org_id, headers, name="Vaso")
+    chaveiro = _product(client, org_id, headers, name="Chaveiro")
+    oculto = _product(client, org_id, headers, name="Oculto")
+
+    def cat(cid, name, product_ids, cover_url="", x=50, y=50):
+        return {
+            "id": cid,
+            "name": name,
+            "product_ids": product_ids,
+            "cover_url": cover_url,
+            "cover_x": x,
+            "cover_y": y,
+        }
+
+    categories = [
+        cat("deco", "Decoração", [vaso["id"]], "https://img/capa.jpg", 20, 75),
+        cat("brindes", "Brindes", [vaso["id"], chaveiro["id"]]),
+        cat("vazia", "Só oculto", [oculto["id"]]),
+        cat("sem-nome", "  ", [chaveiro["id"]]),
+    ]
+    response = client.put(
+        f"/api/v1/organizations/{org_id}/store",
+        json={"categories": categories, "hidden_product_ids": [oculto["id"]]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["settings"]["categories"] == [{**c, "parent_id": ""} for c in categories]
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert body["settings"]["categories"] == [
+        {"id": "deco", "name": "Decoração", "cover_url": "https://img/capa.jpg", "cover_x": 20, "cover_y": 75, "parent_id": ""},
+        {"id": "brindes", "name": "Brindes", "cover_url": "", "cover_x": 50, "cover_y": 50, "parent_id": ""},
+    ]
+    by_name = {p["name"]: p["category_ids"] for p in body["products"]}
+    assert by_name == {"Vaso": ["deco", "brindes"], "Chaveiro": ["brindes"]}
+
+
+def test_product_and_featured_order_are_respected_publicly(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    a = _product(client, org_id, headers, name="Prod A")
+    b = _product(client, org_id, headers, name="Prod B")
+    c = _product(client, org_id, headers, name="Prod C")
+    d = _product(client, org_id, headers, name="Prod D")
+
+    response = client.put(
+        f"/api/v1/organizations/{org_id}/store",
+        json={
+            "product_order": [c["id"], a["id"]],
+            "featured_product_ids": [d["id"], c["id"], a["id"], b["id"]],
+            "hidden_product_ids": [b["id"]],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    # C, A na ordem escolhida; D (fora da lista) vai para o fim.
+    assert [p["name"] for p in body["products"]] == ["Prod C", "Prod A", "Prod D"]
+    # Destaques na ordem escolhida, sem o produto oculto.
+    assert body["settings"]["featured_product_ids"] == [d["id"], c["id"], a["id"]]
+
+
+def test_product_created_without_publish_stays_hidden_until_published(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    _product(client, org_id, headers, name="Publicado")
+    draft = _product(client, org_id, headers, name="Peça da precificação", publish_in_store=False)
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert [p["name"] for p in body["products"]] == ["Publicado"]
+
+    # Lojista publica manualmente: tira o produto da lista de ocultos.
+    settings = client.get(f"/api/v1/organizations/{org_id}/store", headers=headers).json()["settings"]
+    assert settings["hidden_product_ids"] == [draft["id"]]
+    settings["hidden_product_ids"] = []
+    response = client.put(f"/api/v1/organizations/{org_id}/store", json=settings, headers=headers)
+    assert response.status_code == 200, response.text
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert sorted(p["name"] for p in body["products"]) == ["Peça da precificação", "Publicado"]
+
+
+def test_price_on_request_hides_the_price_publicly(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    consultar = _product(client, org_id, headers, name="Sob medida", manual_price=300)
+    _product(client, org_id, headers, name="Chaveiro", manual_price=12.5)
+
+    response = client.put(
+        f"/api/v1/organizations/{org_id}/store",
+        json={"price_on_request_product_ids": [consultar["id"]]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    by_name = {p["name"]: p for p in body["products"]}
+    assert by_name["Sob medida"]["price_on_request"] is True
+    assert by_name["Sob medida"]["price"] == 0.0
+    assert by_name["Chaveiro"]["price_on_request"] is False
+    assert by_name["Chaveiro"]["price"] == 12.5
+
+
+def test_public_price_of_recipe_products_matches_the_product_cost(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    base = f"/api/v1/organizations/{org_id}"
+    profile = client.post(
+        f"{base}/cost-profiles",
+        json={
+            "name": "Padrão",
+            "energy_cost_per_kwh": 0.9,
+            "labor_cost_per_hour": 20.0,
+            "packaging_cost_flat": 3.0,
+            "waste_percentage": 5.0,
+            "fees_percentage": 3.0,
+            "profit_margin_percentage": 40.0,
+            "is_default": True,
+        },
+        headers=headers,
+    ).json()
+    pla = client.post(
+        f"{base}/materials", json={"name": "PLA", "type": "argila", "cost_per_kg": 120.0}, headers=headers
+    )
+    assert pla.status_code == 201, pla.text
+    pla_id = pla.json()["id"]
+    small = _product(client, org_id, headers, name="Pequeno", manual_price=None,
+                     materials=[{"material_id": pla_id, "quantity_g": 20}])
+    big = _product(client, org_id, headers, name="Grande", manual_price=None, print_time_hours=3,
+                   materials=[{"material_id": pla_id, "quantity_g": 250}])
+
+    body = client.get(f"/api/v1/public/stores/{slug}").json()
+    by_name = {p["name"]: p["price"] for p in body["products"]}
+    for product in (small, big):
+        cost = client.get(
+            f"{base}/products/{product['id']}/cost?cost_profile_id={profile['id']}", headers=headers
+        ).json()
+        assert by_name[product["name"]] == round(cost["suggested_price"], 2)
+    assert by_name["Grande"] > by_name["Pequeno"]
+
+
+def test_store_accepts_the_winner_brand_theme(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    response = client.put(
+        f"/api/v1/organizations/{org_id}/store",
+        json={"theme": "winner", "accent": "vermelho"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert client.get(f"/api/v1/public/stores/{slug}").json()["settings"]["theme"] == "winner"
+    bad = client.put(f"/api/v1/organizations/{org_id}/store", json={"theme": "neon"}, headers=headers)
+    assert bad.status_code == 422
+
+
+def test_store_reels_accept_only_instagram_links(client: TestClient):
+    owner = register_user(client, organization_name="Reels Shop", email="reels@moria.io")
+    headers = auth_headers(owner["access_token"])
+    org = client.get("/api/v1/users/me", headers=headers).json()["organizations"][0]["organization"]
+    url = f"/api/v1/organizations/{org['id']}/store"
+
+    ok = client.put(url, json={"reels": ["https://www.instagram.com/reel/DAbc123_x/", " "]}, headers=headers)
+    assert ok.status_code == 200, ok.text
+    public = client.get(f"/api/v1/public/stores/{org['slug']}").json()
+    assert public["settings"]["reels"] == ["https://www.instagram.com/reel/DAbc123_x/"]
+
+    bad = client.put(url, json={"reels": ["https://evil.example/reel/abc"]}, headers=headers)
+    assert bad.status_code == 422
+
+
+def test_store_subcategories_are_public_and_limited_to_two_levels(client: TestClient):
+    owner = register_user(client, organization_name="Menu Shop", email="menu@moria.io")
+    headers = auth_headers(owner["access_token"])
+    org = client.get("/api/v1/users/me", headers=headers).json()["organizations"][0]["organization"]
+    base = f"/api/v1/organizations/{org['id']}"
+    product = client.post(
+        f"{base}/products", json={"name": "Xícara", "manual_price": 50, "materials": []}, headers=headers
+    ).json()
+
+    saved = client.put(
+        f"{base}/store",
+        json={
+            "categories": [
+                {"id": "dia", "name": "Dia a dia", "product_ids": []},
+                {"id": "xic", "name": "Xícaras", "product_ids": [product["id"]], "parent_id": "dia"},
+                # Terceiro nível e mãe inexistente: viram categorias principais.
+                {"id": "neta", "name": "Neta", "product_ids": [], "parent_id": "xic"},
+                {"id": "orfa", "name": "Órfã", "product_ids": [], "parent_id": "nao-existe"},
+            ]
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    parents = {c["id"]: c["parent_id"] for c in saved.json()["settings"]["categories"]}
+    assert parents == {"dia": "", "xic": "dia", "neta": "", "orfa": ""}
+
+    public = client.get(f"/api/v1/public/stores/{org['slug']}").json()["settings"]["categories"]
+    # A principal aparece mesmo sem produto próprio, porque a subcategoria tem.
+    assert {c["id"]: c["parent_id"] for c in public} == {"dia": "", "xic": "dia"}
+
+
+def test_store_badges_lead_time_dark_and_3d_models(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    product = _product(client, org_id, headers, name="Caneca", manual_price=40)
+    url = f"/api/v1/organizations/{org_id}/store"
+
+    default = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert len(default["settings"]["trust_badges"]) == 3
+    assert default["settings"]["auto_dark"] is False
+
+    payload = {
+        "auto_dark": True,
+        "trust_badges": [" Feito à mão ", ""],
+        "production_days": "7 a 10 dias úteis",
+        "model_urls": {product["id"]: "https://exemplo.com/caneca.glb", "outro": " "},
+    }
+    ok = client.put(url, json=payload, headers=headers)
+    assert ok.status_code == 200, ok.text
+    store_use_cases._public_cache.clear()
+    public = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert public["settings"]["auto_dark"] is True
+    assert public["settings"]["trust_badges"] == ["Feito à mão"]
+    assert public["settings"]["production_days"] == "7 a 10 dias úteis"
+    assert public["products"][0]["model_url"] == "https://exemplo.com/caneca.glb"
+
+    bad = client.put(url, json={"model_urls": {product["id"]: "javascript:alert(1)"}}, headers=headers)
+    assert bad.status_code == 422
+
+
+def test_store_discounts_product_promo_and_tiers(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    caneca = _product(client, org_id, headers, name="Caneca", manual_price=100)
+    prato = _product(client, org_id, headers, name="Prato", manual_price=50)
+    url = f"/api/v1/organizations/{org_id}/store"
+
+    payload = {
+        "product_discounts": {caneca["id"]: 15, prato["id"]: 0},
+        "promo_percent": 10,
+        "promo_label": "Black Friday",
+        "promo_start": "2000-01-01",
+        "promo_end": "2999-12-31",
+        "cart_tiers": [{"min_total": 500, "percent": 20}],
+    }
+    ok = client.put(url, json=payload, headers=headers)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["settings"]["product_discounts"] == {caneca["id"]: 15}
+    store_use_cases._public_cache.clear()
+    public = client.get(f"/api/v1/public/stores/{slug}").json()
+    by_name = {p["name"]: p for p in public["products"]}
+    assert by_name["Caneca"]["discount_percent"] == 15  # o maior: produto 15 > geral 10
+    assert by_name["Caneca"]["price"] == 100  # preço cheio continua
+    assert by_name["Prato"]["discount_percent"] == 10
+    assert public["settings"]["promo_label"] == "Black Friday"
+    assert public["settings"]["cart_tiers"] == [{"min_total": 500, "percent": 20}]
+
+    # Promoção que já acabou não aparece nem desconta.
+    client.put(url, json={**payload, "promo_end": "2001-01-01"}, headers=headers)
+    store_use_cases._public_cache.clear()
+    public = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert public["settings"]["promo_percent"] == 0
+    assert {p["name"]: p["discount_percent"] for p in public["products"]}["Prato"] == 0
+
+    bad = client.put(url, json={"product_discounts": {caneca["id"]: 95}}, headers=headers)
+    assert bad.status_code == 422
+
+
+def test_store_products_excluded_from_promotions(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    vaso = _product(client, org_id, headers, name="Vaso", manual_price=200)
+    _product(client, org_id, headers, name="Prato", manual_price=50)
+    url = f"/api/v1/organizations/{org_id}/store"
+    payload = {
+        "promo_percent": 10,
+        "promo_excluded_ids": [vaso["id"]],
+        "cart_tiers": [{"min_total": 500, "percent": 20}],
+    }
+    assert client.put(url, json=payload, headers=headers).status_code == 200
+    store_use_cases._public_cache.clear()
+    public = client.get(f"/api/v1/public/stores/{slug}").json()
+    by_name = {p["name"]: p for p in public["products"]}
+    assert by_name["Vaso"]["discount_percent"] == 0
+    assert by_name["Vaso"]["promo_excluded"] is True
+    assert by_name["Prato"]["discount_percent"] == 10
+
+    # O desconto próprio do produto continua valendo mesmo fora das promoções.
+    payload["product_discounts"] = {vaso["id"]: 5}
+    client.put(url, json=payload, headers=headers)
+    store_use_cases._public_cache.clear()
+    public = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert {p["name"]: p for p in public["products"]}["Vaso"]["discount_percent"] == 5
+
+
+def test_store_background_settings(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    url = f"/api/v1/organizations/{org_id}/store"
+    public = client.get(f"/api/v1/public/stores/{slug}").json()
+    assert public["settings"]["background_style"] == "none"
+
+    payload = {
+        "background_style": "foto",
+        "background_url": "https://i.ibb.co/x/parede.jpg",
+        "background_opacity": 25,
+        "background_header": True,
+    }
+    assert client.put(url, json=payload, headers=headers).status_code == 200
+    store_use_cases._public_cache.clear()
+    s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
+    assert (s["background_style"], s["background_opacity"], s["background_header"]) == ("foto", 25, True)
+    assert client.put(url, json={"background_style": "neon"}, headers=headers).status_code == 422
+
+
+def test_store_installments_and_mobile_slide(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    url = f"/api/v1/organizations/{org_id}/store"
+    payload = {
+        "installments_max": 3,
+        "installments_min": 30,
+        "slides": [{"url": "https://x/a.jpg", "title": "", "subtitle": "", "mobile_url": "https://x/a-cel.jpg"}],
+    }
+    assert client.put(url, json=payload, headers=headers).status_code == 200
+    store_use_cases._public_cache.clear()
+    s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
+    assert (s["installments_max"], s["installments_min"]) == (3, 30)
+    assert s["slides"][0]["mobile_url"] == "https://x/a-cel.jpg"
+    assert client.put(url, json={"installments_max": 99}, headers=headers).status_code == 422
+
+
+def test_store_festivals_and_locations(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    url = f"/api/v1/organizations/{org_id}/store"
+    payload = {
+        "festivals": [
+            {"date": "2099-12-16", "place": "Bay Market", "time": "13h"},
+            {"date": "2000-01-01", "place": "Antigo"},
+            {"date": "2099-12-05", "place": "Nova Cidade", "maps_url": "https://maps.app.goo.gl/x"},
+        ],
+        "locations": [{"name": "Festival Bay Market - NIT", "maps_url": "https://maps.app.goo.gl/y"}],
+    }
+    assert client.put(url, json=payload, headers=headers).status_code == 200
+    store_use_cases._public_cache.clear()
+    s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
+    assert [f["place"] for f in s["festivals"]] == ["Nova Cidade", "Bay Market"]
+    assert s["locations"][0]["name"] == "Festival Bay Market - NIT"
+    bad = {"festivals": [{"date": "16/12", "place": "x"}]}
+    assert client.put(url, json=bad, headers=headers).status_code == 422

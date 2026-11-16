@@ -1,0 +1,306 @@
+from datetime import UTC, date, datetime
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from src.application.customers.use_cases import get_customer
+from src.application.financial.use_cases import order_has_paid_revenue, record_order_paid
+from src.application.inventory.use_cases import get_material
+from src.application.machines.use_cases import get_machine
+from src.application.products.use_cases import get_product
+from src.application.projects.use_cases import get_project
+from src.domain.orders.status import validate_status, validate_transition
+from src.domain.orders.totals import OrderItemTotal, compute_total_amount
+from src.domain.shared.exceptions import (
+    OrderItemNotFoundError,
+    OrderNotFoundError,
+    ProjectVersionNotFoundError,
+    QuoteNotFoundError,
+)
+from src.infrastructure.db.models import Order, OrderItem
+from src.infrastructure.repositories import (
+    OrderItemRepository,
+    OrderRepository,
+    ProjectVersionRepository,
+    QuoteRepository,
+)
+
+
+def _to_datetime(value: date | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime(value.year, value.month, value.day, tzinfo=UTC)
+
+
+def create_order(
+    db: Session,
+    *,
+    organization_id: UUID,
+    customer_id: UUID,
+    quote_id: UUID | None,
+    notes: str | None,
+    created_by: UUID | None,
+    due_date: date | None = None,
+    status: str | None = None,
+) -> Order:
+    get_customer(db, organization_id=organization_id, customer_id=customer_id)
+
+    total_amount = 0.0
+    if quote_id is not None:
+        quote_repo = QuoteRepository(db)
+        quote = quote_repo.get(organization_id, quote_id)
+        if quote is None:
+            raise QuoteNotFoundError(str(quote_id))
+        total_amount = quote.final_price if quote.final_price is not None else quote.suggested_price
+        quote.status = "accepted"
+
+    order = OrderRepository(db).create(
+        organization_id=organization_id,
+        customer_id=customer_id,
+        quote_id=quote_id,
+        total_amount=total_amount,
+        notes=notes,
+        created_by=created_by,
+        due_date=_to_datetime(due_date),
+    )
+    if status is not None and status != order.status:
+        _set_status_manually(db, order, new_status=status, triggered_by=created_by)
+    db.commit()
+    return order
+
+
+def list_orders(db: Session, *, organization_id: UUID) -> list[Order]:
+    return OrderRepository(db).list_for_org(organization_id)
+
+
+def get_order(db: Session, *, organization_id: UUID, order_id: UUID) -> Order:
+    order = OrderRepository(db).get(organization_id, order_id)
+    if order is None:
+        raise OrderNotFoundError(str(order_id))
+    return order
+
+
+def update_order(
+    db: Session,
+    *,
+    organization_id: UUID,
+    order_id: UUID,
+    customer_id: UUID | None,
+    notes: str | None,
+    due_date: date | None = None,
+    clear_due_date: bool = False,
+    production_status: str | None = None,
+    status: str | None = None,
+    triggered_by: UUID | None = None,
+) -> Order:
+    order = get_order(db, organization_id=organization_id, order_id=order_id)
+    if status is not None and status != order.status:
+        _set_status_manually(db, order, new_status=status, triggered_by=triggered_by)
+    if customer_id is not None:
+        get_customer(db, organization_id=organization_id, customer_id=customer_id)
+        order.customer_id = customer_id
+    if notes is not None:
+        order.notes = notes
+    if clear_due_date:
+        order.due_date = None
+    elif due_date is not None:
+        order.due_date = _to_datetime(due_date)
+    if production_status is not None:
+        order.production_status = production_status
+    db.commit()
+    return order
+
+
+def delete_order(db: Session, *, organization_id: UUID, order_id: UUID) -> None:
+    order = get_order(db, organization_id=organization_id, order_id=order_id)
+    OrderRepository(db).soft_delete(order)
+    db.commit()
+
+
+_IN_PROGRESS_STATUSES = {"production", "firing", "finishing", "packaging"}
+_FINISHED_STATUSES = {"delivered", "completed"}
+
+
+def _sync_production_status(order: Order, new_status: str) -> None:
+    """Moving the order along the workflow also moves its shop-floor progress,
+
+    so nobody has to update the same order in two places.
+    """
+    if new_status in _FINISHED_STATUSES:
+        order.production_status = "done"
+    elif new_status in _IN_PROGRESS_STATUSES and order.production_status == "todo":
+        order.production_status = "doing"
+
+
+_EARLY_STATUSES = {"quote", "order", "paid"}
+
+
+def _set_status_manually(
+    db: Session, order: Order, *, new_status: str, triggered_by: UUID | None
+) -> None:
+    """Status escolhido à mão na criação/edição: pode ir para qualquer estágio,
+
+    para frente ou para trás. A situação de produção acompanha também na volta
+    (reabrir um pedido concluído o tira de "done"), e a receita do "pago" só é
+    lançada uma vez por pedido, por mais que o status vá e volte.
+    """
+    validate_status(new_status)
+    OrderRepository(db).update_status(order, new_status=new_status)
+    if new_status in _FINISHED_STATUSES:
+        order.production_status = "done"
+    elif new_status in _IN_PROGRESS_STATUSES:
+        order.production_status = "doing"
+    elif new_status in _EARLY_STATUSES and order.production_status == "done":
+        order.production_status = "todo"
+    if (
+        new_status == "paid"
+        and order.total_amount > 0
+        and not order_has_paid_revenue(
+            db, organization_id=order.organization_id, order_id=order.id
+        )
+    ):
+        record_order_paid(
+            db,
+            organization_id=order.organization_id,
+            order_id=order.id,
+            amount=order.total_amount,
+            created_by=triggered_by,
+        )
+
+
+def transition_order_status(
+    db: Session,
+    *,
+    organization_id: UUID,
+    order_id: UUID,
+    new_status: str,
+    triggered_by: UUID | None = None,
+) -> Order:
+    order = get_order(db, organization_id=organization_id, order_id=order_id)
+    validate_transition(order.status, new_status)
+    OrderRepository(db).update_status(order, new_status=new_status)
+    _sync_production_status(order, new_status)
+    if new_status == "paid" and not order_has_paid_revenue(
+        db, organization_id=organization_id, order_id=order.id
+    ):
+        record_order_paid(
+            db,
+            organization_id=organization_id,
+            order_id=order.id,
+            amount=order.total_amount,
+            created_by=triggered_by,
+        )
+    db.commit()
+    return order
+
+
+def add_order_item(
+    db: Session,
+    *,
+    organization_id: UUID,
+    order_id: UUID,
+    project_id: UUID | None,
+    project_version_id: UUID | None,
+    product_id: UUID | None,
+    machine_id: UUID | None,
+    material_id: UUID | None,
+    quantity: int,
+    unit_cost: float | None,
+    unit_price: float | None,
+) -> OrderItem:
+    order = get_order(db, organization_id=organization_id, order_id=order_id)
+
+    if project_version_id is not None:
+        if project_id is None:
+            raise ProjectVersionNotFoundError(str(project_version_id))
+        get_project(db, organization_id=organization_id, project_id=project_id)
+        version = ProjectVersionRepository(db).get(
+            organization_id, project_id, project_version_id
+        )
+        if version is None:
+            raise ProjectVersionNotFoundError(str(project_version_id))
+
+    if product_id is not None:
+        get_product(db, organization_id=organization_id, product_id=product_id)
+
+    if material_id is not None:
+        get_material(db, organization_id=organization_id, material_id=material_id)
+
+    if machine_id is not None:
+        get_machine(db, organization_id=organization_id, machine_id=machine_id)
+
+    item_repo = OrderItemRepository(db)
+    item_repo.create(
+        order_id=order.id,
+        organization_id=organization_id,
+        project_version_id=project_version_id,
+        product_id=product_id,
+        machine_id=machine_id,
+        material_id=material_id,
+        quantity=quantity,
+        unit_cost=unit_cost,
+        unit_price=unit_price,
+    )
+
+    items = item_repo.list_for_order(organization_id, order.id)
+    new_total = compute_total_amount(
+        [OrderItemTotal(quantity=i.quantity, unit_price=i.unit_price) for i in items]
+    )
+    OrderRepository(db).update_total_amount(order, total_amount=new_total)
+    db.commit()
+    return item_repo.list_for_order(organization_id, order.id)[-1]
+
+
+def list_order_items(db: Session, *, organization_id: UUID, order_id: UUID) -> list[OrderItem]:
+    get_order(db, organization_id=organization_id, order_id=order_id)
+    return OrderItemRepository(db).list_for_order(organization_id, order_id)
+
+
+def _get_order_item(
+    db: Session, *, organization_id: UUID, order_id: UUID, item_id: UUID
+) -> OrderItem:
+    item = OrderItemRepository(db).get(organization_id, order_id, item_id)
+    if item is None:
+        raise OrderItemNotFoundError(str(item_id))
+    return item
+
+
+def _recompute_order_total(db: Session, *, organization_id: UUID, order: Order) -> None:
+    items = OrderItemRepository(db).list_for_order(organization_id, order.id)
+    new_total = compute_total_amount(
+        [OrderItemTotal(quantity=i.quantity, unit_price=i.unit_price) for i in items]
+    )
+    OrderRepository(db).update_total_amount(order, total_amount=new_total)
+
+
+def update_order_item(
+    db: Session,
+    *,
+    organization_id: UUID,
+    order_id: UUID,
+    item_id: UUID,
+    product_id: UUID | None = None,
+    quantity: int | None,
+    unit_cost: float | None,
+    unit_price: float | None,
+) -> OrderItem:
+    order = get_order(db, organization_id=organization_id, order_id=order_id)
+    item = _get_order_item(db, organization_id=organization_id, order_id=order_id, item_id=item_id)
+    if product_id is not None:
+        get_product(db, organization_id=organization_id, product_id=product_id)
+    OrderItemRepository(db).update(
+        item, product_id=product_id, quantity=quantity, unit_cost=unit_cost, unit_price=unit_price
+    )
+    _recompute_order_total(db, organization_id=organization_id, order=order)
+    db.commit()
+    return item
+
+
+def delete_order_item(
+    db: Session, *, organization_id: UUID, order_id: UUID, item_id: UUID
+) -> None:
+    order = get_order(db, organization_id=organization_id, order_id=order_id)
+    item = _get_order_item(db, organization_id=organization_id, order_id=order_id, item_id=item_id)
+    OrderItemRepository(db).delete(item)
+    _recompute_order_total(db, organization_id=organization_id, order=order)
+    db.commit()

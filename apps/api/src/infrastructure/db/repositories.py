@@ -1,0 +1,1472 @@
+from datetime import UTC, date, datetime
+from uuid import UUID
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from src.infrastructure.db.models import (
+    BillingEvent,
+    CostProfile,
+    Customer,
+    FileAsset,
+    FinancialTransaction,
+    InventoryItem,
+    InventoryMovement,
+    Machine,
+    Material,
+    Order,
+    OrderItem,
+    Organization,
+    OrgMember,
+    Plan,
+    PlanEntitlement,
+    Product,
+    ProductMaterial,
+    Project,
+    ProjectVersion,
+    Quote,
+    RefreshToken,
+    StoreProductDay,
+    StoreVisitDay,
+    StoreVisitor,
+    Subscription,
+    User,
+)
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    """SQLite drops tzinfo on round-trip even for DateTime(timezone=True); Postgres keeps it."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+class UserRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get_by_email(self, email: str) -> User | None:
+        return self.session.scalar(select(User).where(User.email == email))
+
+    def get_by_id(self, user_id: UUID) -> User | None:
+        return self.session.get(User, user_id)
+
+    def create(self, *, email: str, password_hash: str, full_name: str | None) -> User:
+        user = User(email=email, password_hash=password_hash, full_name=full_name)
+        self.session.add(user)
+        self.session.flush()
+        return user
+
+
+class OrganizationRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get_by_id(self, organization_id: UUID) -> Organization | None:
+        return self.session.get(Organization, organization_id)
+
+    def slug_exists(self, slug: str) -> bool:
+        stmt = select(Organization).where(Organization.slug == slug)
+        return self.session.scalar(stmt) is not None
+
+    def get_by_slug(self, slug: str) -> Organization | None:
+        return self.session.scalar(select(Organization).where(Organization.slug == slug))
+
+    def create(self, *, name: str, slug: str) -> Organization:
+        organization = Organization(name=name, slug=slug)
+        self.session.add(organization)
+        self.session.flush()
+        return organization
+
+    def list_for_user(self, user_id: UUID) -> list[Organization]:
+        return list(
+            self.session.scalars(
+                select(Organization)
+                .join(OrgMember, OrgMember.organization_id == Organization.id)
+                .where(OrgMember.user_id == user_id)
+                .order_by(Organization.created_at)
+            )
+        )
+
+
+class OrgMemberRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, user_id: UUID) -> OrgMember | None:
+        return self.session.scalar(
+            select(OrgMember).where(
+                OrgMember.organization_id == organization_id,
+                OrgMember.user_id == user_id,
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[OrgMember]:
+        return list(
+            self.session.scalars(
+                select(OrgMember)
+                .where(OrgMember.organization_id == organization_id)
+                .order_by(OrgMember.created_at)
+            )
+        )
+
+    def count_owners(self, organization_id: UUID) -> int:
+        return len(
+            [
+                m
+                for m in self.list_for_org(organization_id)
+                if m.role == "OWNER"
+            ]
+        )
+
+    def create(
+        self, *, organization_id: UUID, user_id: UUID, role: str, invited_by: UUID | None = None
+    ) -> OrgMember:
+        member = OrgMember(
+            organization_id=organization_id, user_id=user_id, role=role, invited_by=invited_by
+        )
+        self.session.add(member)
+        self.session.flush()
+        return member
+
+    def delete(self, member: OrgMember) -> None:
+        self.session.delete(member)
+        self.session.flush()
+
+
+class RefreshTokenRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, *, user_id: UUID, token_hash: str, expires_at: datetime) -> RefreshToken:
+        token = RefreshToken(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
+        self.session.add(token)
+        self.session.flush()
+        return token
+
+    def get_valid_by_hash(self, token_hash: str) -> RefreshToken | None:
+        stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        token = self.session.scalar(stmt)
+        if token is None or token.revoked_at is not None:
+            return None
+        if _as_aware_utc(token.expires_at) < datetime.now(UTC):
+            return None
+        return token
+
+    def revoke(self, token: RefreshToken) -> None:
+        token.revoked_at = datetime.now(UTC)
+        self.session.flush()
+
+
+class ProjectRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, project_id: UUID) -> Project | None:
+        return self.session.scalar(
+            select(Project).where(
+                Project.id == project_id,
+                Project.organization_id == organization_id,
+                Project.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Project]:
+        return list(
+            self.session.scalars(
+                select(Project)
+                .where(Project.organization_id == organization_id, Project.deleted_at.is_(None))
+                .order_by(Project.created_at.desc())
+            )
+        )
+
+    def list_for_customer(self, organization_id: UUID, customer_id: UUID) -> list[Project]:
+        return list(
+            self.session.scalars(
+                select(Project)
+                .where(
+                    Project.organization_id == organization_id,
+                    Project.customer_id == customer_id,
+                    Project.deleted_at.is_(None),
+                )
+                .order_by(Project.created_at.desc())
+            )
+        )
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        description: str | None,
+        created_by: UUID,
+        customer_id: UUID | None = None,
+    ) -> Project:
+        project = Project(
+            organization_id=organization_id,
+            name=name,
+            description=description,
+            created_by=created_by,
+            customer_id=customer_id,
+        )
+        self.session.add(project)
+        self.session.flush()
+        return project
+
+    def soft_delete(self, project: Project) -> None:
+        project.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+
+class ProjectVersionRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    # organization_id params below are unused - ProjectVersion has no
+    # column for it - accepted only so this matches the Firestore
+    # repository's signature (see infrastructure/repositories.py), whose
+    # versions live in a subcollection under the org.
+
+    def get(
+        self, organization_id: UUID, project_id: UUID, version_id: UUID
+    ) -> ProjectVersion | None:
+        return self.session.scalar(
+            select(ProjectVersion).where(
+                ProjectVersion.id == version_id, ProjectVersion.project_id == project_id
+            )
+        )
+
+    def list_for_project(
+        self, organization_id: UUID, project_id: UUID
+    ) -> list[ProjectVersion]:
+        return list(
+            self.session.scalars(
+                select(ProjectVersion)
+                .where(ProjectVersion.project_id == project_id)
+                .order_by(ProjectVersion.version_number.desc())
+            )
+        )
+
+    def next_version_number(self, organization_id: UUID, project_id: UUID) -> int:
+        current_max = self.session.scalar(
+            select(ProjectVersion.version_number)
+            .where(ProjectVersion.project_id == project_id)
+            .order_by(ProjectVersion.version_number.desc())
+            .limit(1)
+        )
+        return (current_max or 0) + 1
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        version_number: int,
+        label: str | None,
+        source_type: str,
+        created_by: UUID,
+    ) -> ProjectVersion:
+        version = ProjectVersion(
+            project_id=project_id,
+            version_number=version_number,
+            label=label,
+            source_type=source_type,
+            status="ready",
+            created_by=created_by,
+        )
+        self.session.add(version)
+        self.session.flush()
+        return version
+
+
+class FileAssetRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, file_id: UUID) -> FileAsset | None:
+        return self.session.scalar(
+            select(FileAsset).where(
+                FileAsset.id == file_id, FileAsset.organization_id == organization_id
+            )
+        )
+
+    def sum_size_bytes_for_org(self, organization_id: UUID) -> int:
+        return (
+            self.session.scalar(
+                select(func.sum(FileAsset.size_bytes)).where(
+                    FileAsset.organization_id == organization_id,
+                    FileAsset.status == "uploaded",
+                )
+            )
+            or 0
+        )
+
+    def list_for_version(
+        self, organization_id: UUID, project_version_id: UUID
+    ) -> list[FileAsset]:
+        return list(
+            self.session.scalars(
+                select(FileAsset)
+                .where(
+                    FileAsset.project_version_id == project_version_id,
+                    FileAsset.organization_id == organization_id,
+                )
+                .order_by(FileAsset.created_at)
+            )
+        )
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID | None,
+        kind: str,
+        storage_key: str,
+        mime_type: str,
+        uploaded_by: UUID,
+    ) -> FileAsset:
+        file_asset = FileAsset(
+            organization_id=organization_id,
+            project_id=project_id,
+            kind=kind,
+            storage_key=storage_key,
+            mime_type=mime_type,
+            uploaded_by=uploaded_by,
+        )
+        self.session.add(file_asset)
+        self.session.flush()
+        return file_asset
+
+    def mark_uploaded(self, file_asset: FileAsset, *, size_bytes: int, mime_type: str) -> None:
+        file_asset.status = "uploaded"
+        file_asset.size_bytes = size_bytes
+        file_asset.mime_type = mime_type
+        self.session.flush()
+
+    def attach_to_version(self, file_asset: FileAsset, *, project_version_id: UUID) -> None:
+        file_asset.project_version_id = project_version_id
+        self.session.flush()
+
+    def create_uploaded(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID | None,
+        kind: str,
+        storage_key: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256_hash: str,
+        uploaded_by: UUID | None,
+    ) -> FileAsset:
+        """For server-side writes (e.g. AI worker output) that skip the
+
+        pending -> confirm dance a browser upload needs: the caller already
+        holds the bytes, so there is nothing left to confirm.
+        """
+        file_asset = FileAsset(
+            organization_id=organization_id,
+            project_id=project_id,
+            kind=kind,
+            storage_key=storage_key,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256_hash=sha256_hash,
+            status="uploaded",
+            uploaded_by=uploaded_by,
+        )
+        self.session.add(file_asset)
+        self.session.flush()
+        return file_asset
+
+
+class CostProfileRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, cost_profile_id: UUID) -> CostProfile | None:
+        return self.session.scalar(
+            select(CostProfile).where(
+                CostProfile.id == cost_profile_id,
+                CostProfile.organization_id == organization_id,
+                CostProfile.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[CostProfile]:
+        return list(
+            self.session.scalars(
+                select(CostProfile)
+                .where(
+                    CostProfile.organization_id == organization_id,
+                    CostProfile.deleted_at.is_(None),
+                )
+                .order_by(CostProfile.created_at)
+            )
+        )
+
+    def soft_delete(self, profile: CostProfile) -> None:
+        profile.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def get_default(self, organization_id: UUID) -> CostProfile | None:
+        return self.session.scalar(
+            select(CostProfile).where(
+                CostProfile.organization_id == organization_id,
+                CostProfile.is_default.is_(True),
+                CostProfile.deleted_at.is_(None),
+            )
+        )
+
+    def clear_default(self, organization_id: UUID) -> None:
+        for profile in self.list_for_org(organization_id):
+            if profile.is_default:
+                profile.is_default = False
+        self.session.flush()
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        energy_cost_per_kwh: float,
+        labor_cost_per_hour: float,
+        packaging_cost_flat: float,
+        waste_percentage: float,
+        fees_percentage: float,
+        profit_margin_percentage: float,
+        tax_percentage: float | None,
+        is_default: bool,
+    ) -> CostProfile:
+        profile = CostProfile(
+            organization_id=organization_id,
+            name=name,
+            energy_cost_per_kwh=energy_cost_per_kwh,
+            labor_cost_per_hour=labor_cost_per_hour,
+            packaging_cost_flat=packaging_cost_flat,
+            waste_percentage=waste_percentage,
+            fees_percentage=fees_percentage,
+            profit_margin_percentage=profit_margin_percentage,
+            tax_percentage=tax_percentage,
+            is_default=is_default,
+        )
+        self.session.add(profile)
+        self.session.flush()
+        return profile
+
+
+class QuoteRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, quote_id: UUID) -> Quote | None:
+        return self.session.scalar(
+            select(Quote).where(
+                Quote.id == quote_id,
+                Quote.organization_id == organization_id,
+                Quote.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Quote]:
+        return list(
+            self.session.scalars(
+                select(Quote)
+                .where(Quote.organization_id == organization_id, Quote.deleted_at.is_(None))
+                .order_by(Quote.created_at.desc())
+            )
+        )
+
+    def list_for_customer(self, organization_id: UUID, customer_id: UUID) -> list[Quote]:
+        return list(
+            self.session.scalars(
+                select(Quote)
+                .where(
+                    Quote.organization_id == organization_id,
+                    Quote.customer_id == customer_id,
+                    Quote.deleted_at.is_(None),
+                )
+                .order_by(Quote.created_at.desc())
+            )
+        )
+
+    def soft_delete(self, quote: Quote) -> None:
+        quote.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        cost_profile_id: UUID,
+        project_version_id: UUID | None,
+        customer_id: UUID | None,
+        created_by: UUID | None,
+        piece_name: str | None,
+        printer_name: str | None,
+        machine_id: UUID | None = None,
+        material_id: UUID | None = None,
+        weight_g: float | None,
+        cost_per_kg: float | None = None,
+        extra_items: list[dict] | None = None,
+        print_time_hours: float | None = None,
+        depreciation_mode: str | None = None,
+        depreciation_value: float | None = None,
+        firing: dict | None = None,
+        labor_hours: float | None = None,
+        profit_margin_percentage: float | None = None,
+        quantity: int,
+        cost_breakdown_snapshot: dict,
+        production_cost: float,
+        suggested_price: float,
+    ) -> Quote:
+        quote = Quote(
+            organization_id=organization_id,
+            cost_profile_id=cost_profile_id,
+            project_version_id=project_version_id,
+            customer_id=customer_id,
+            created_by=created_by,
+            piece_name=piece_name,
+            printer_name=printer_name,
+            machine_id=machine_id,
+            material_id=material_id,
+            weight_g=weight_g,
+            cost_per_kg=cost_per_kg,
+            extra_items=extra_items,
+            print_time_hours=print_time_hours,
+            depreciation_mode=depreciation_mode,
+            depreciation_value=depreciation_value,
+            firing=firing,
+            labor_hours=labor_hours,
+            profit_margin_percentage=profit_margin_percentage,
+            quantity=quantity,
+            cost_breakdown_snapshot=cost_breakdown_snapshot,
+            production_cost=production_cost,
+            suggested_price=suggested_price,
+        )
+        self.session.add(quote)
+        self.session.flush()
+        return quote
+
+
+class MaterialRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, material_id: UUID) -> Material | None:
+        return self.session.scalar(
+            select(Material).where(
+                Material.id == material_id,
+                Material.organization_id == organization_id,
+                Material.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Material]:
+        return list(
+            self.session.scalars(
+                select(Material)
+                .where(Material.organization_id == organization_id, Material.deleted_at.is_(None))
+                .order_by(Material.created_at)
+            )
+        )
+
+    def soft_delete(self, material: Material) -> None:
+        material.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        type: str,
+        color: str | None,
+        density_g_cm3: float | None,
+        cost_per_kg: float | None,
+        supplier: str | None,
+    ) -> Material:
+        material = Material(
+            organization_id=organization_id,
+            name=name,
+            type=type,
+            color=color,
+            density_g_cm3=density_g_cm3,
+            cost_per_kg=cost_per_kg,
+            supplier=supplier,
+        )
+        self.session.add(material)
+        self.session.flush()
+        return material
+
+
+class ProductRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, product_id: UUID) -> Product | None:
+        return self.session.scalar(
+            select(Product).where(
+                Product.id == product_id,
+                Product.organization_id == organization_id,
+                Product.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Product]:
+        return list(
+            self.session.scalars(
+                select(Product)
+                .where(Product.organization_id == organization_id, Product.deleted_at.is_(None))
+                .order_by(Product.created_at)
+            )
+        )
+
+    def soft_delete(self, product: Product) -> None:
+        product.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        description: str | None,
+        print_time_hours: float | None,
+        machine_id: UUID | None,
+        manual_price: float | None = None,
+        size: str | None = None,
+        photo_urls: list[str] | None = None,
+        stock_quantity: int | None = None,
+    ) -> Product:
+        product = Product(
+            organization_id=organization_id,
+            name=name,
+            description=description,
+            print_time_hours=print_time_hours,
+            machine_id=machine_id,
+            manual_price=manual_price,
+            size=size,
+            photo_urls=photo_urls or [],
+            stock_quantity=stock_quantity,
+        )
+        self.session.add(product)
+        self.session.flush()
+        return product
+
+
+class ProductMaterialRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def list_for_product(self, organization_id: UUID, product_id: UUID) -> list[ProductMaterial]:
+        # organization_id is unused here - ProductMaterial has no column
+        # for it - accepted only so this matches the Firestore
+        # repository's signature (see infrastructure/repositories.py),
+        # whose BOM lines live in a subcollection under the org.
+        return list(
+            self.session.scalars(
+                select(ProductMaterial).where(ProductMaterial.product_id == product_id)
+            )
+        )
+
+    def list_for_products(
+        self, organization_id: UUID, product_ids: list[UUID]
+    ) -> dict[UUID, list[ProductMaterial]]:
+        """BOM lines of many products in one query (instead of one per product)."""
+        result: dict[UUID, list[ProductMaterial]] = {pid: [] for pid in product_ids}
+        if not product_ids:
+            return result
+        for line in self.session.scalars(
+            select(ProductMaterial).where(ProductMaterial.product_id.in_(product_ids))
+        ):
+            result.setdefault(line.product_id, []).append(line)
+        return result
+
+    def create(
+        self, *, organization_id: UUID, product_id: UUID, material_id: UUID, quantity_g: float
+    ) -> ProductMaterial:
+        line = ProductMaterial(
+            product_id=product_id, material_id=material_id, quantity_g=quantity_g
+        )
+        self.session.add(line)
+        self.session.flush()
+        return line
+
+    def delete_for_product(self, organization_id: UUID, product_id: UUID) -> None:
+        for line in self.list_for_product(organization_id, product_id):
+            self.session.delete(line)
+        self.session.flush()
+
+
+class InventoryItemRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, item_id: UUID) -> InventoryItem | None:
+        return self.session.scalar(
+            select(InventoryItem).where(
+                InventoryItem.id == item_id,
+                InventoryItem.organization_id == organization_id,
+                InventoryItem.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[InventoryItem]:
+        return list(
+            self.session.scalars(
+                select(InventoryItem)
+                .where(
+                    InventoryItem.organization_id == organization_id,
+                    InventoryItem.deleted_at.is_(None),
+                )
+                .order_by(InventoryItem.created_at)
+            )
+        )
+
+    def soft_delete(self, item: InventoryItem) -> None:
+        item.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        material_id: UUID | None,
+        name: str,
+        category: str,
+        unit: str,
+        minimum_stock: float,
+        unit_cost: float | None,
+        supplier: str | None,
+        initial_quantity: float,
+    ) -> InventoryItem:
+        item = InventoryItem(
+            organization_id=organization_id,
+            material_id=material_id,
+            name=name,
+            category=category,
+            unit=unit,
+            minimum_stock=minimum_stock,
+            unit_cost=unit_cost,
+            supplier=supplier,
+            quantity_on_hand=initial_quantity,
+        )
+        self.session.add(item)
+        self.session.flush()
+        return item
+
+    def update_quantity(self, item: InventoryItem, *, new_quantity: float) -> None:
+        item.quantity_on_hand = new_quantity
+        self.session.flush()
+
+
+class InventoryMovementRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def list_for_item(
+        self, organization_id: UUID, inventory_item_id: UUID
+    ) -> list[InventoryMovement]:
+        return list(
+            self.session.scalars(
+                select(InventoryMovement)
+                .where(
+                    InventoryMovement.inventory_item_id == inventory_item_id,
+                    InventoryMovement.organization_id == organization_id,
+                )
+                .order_by(InventoryMovement.created_at.desc())
+            )
+        )
+
+    def create(
+        self,
+        *,
+        inventory_item_id: UUID,
+        organization_id: UUID,
+        type: str,
+        quantity: float,
+        unit_cost: float | None,
+        notes: str | None,
+        created_by: UUID | None,
+        reference_order_id: UUID | None,
+    ) -> InventoryMovement:
+        movement = InventoryMovement(
+            inventory_item_id=inventory_item_id,
+            organization_id=organization_id,
+            type=type,
+            quantity=quantity,
+            unit_cost=unit_cost,
+            notes=notes,
+            created_by=created_by,
+            reference_order_id=reference_order_id,
+        )
+        self.session.add(movement)
+        self.session.flush()
+        return movement
+
+
+class CustomerRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, customer_id: UUID) -> Customer | None:
+        return self.session.scalar(
+            select(Customer).where(
+                Customer.id == customer_id,
+                Customer.organization_id == organization_id,
+                Customer.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Customer]:
+        return list(
+            self.session.scalars(
+                select(Customer)
+                .where(Customer.organization_id == organization_id, Customer.deleted_at.is_(None))
+                .order_by(Customer.created_at.desc())
+            )
+        )
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        email: str | None,
+        phone: str | None,
+        document: str | None,
+        address: dict | None,
+        notes: str | None,
+    ) -> Customer:
+        customer = Customer(
+            organization_id=organization_id,
+            name=name,
+            email=email,
+            phone=phone,
+            document=document,
+            address=address,
+            notes=notes,
+        )
+        self.session.add(customer)
+        self.session.flush()
+        return customer
+
+    def soft_delete(self, customer: Customer) -> None:
+        customer.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+
+class OrderRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, order_id: UUID) -> Order | None:
+        return self.session.scalar(
+            select(Order).where(
+                Order.id == order_id,
+                Order.organization_id == organization_id,
+                Order.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Order]:
+        return list(
+            self.session.scalars(
+                select(Order)
+                .where(Order.organization_id == organization_id, Order.deleted_at.is_(None))
+                .order_by(Order.created_at.desc())
+            )
+        )
+
+    def list_for_customer(self, organization_id: UUID, customer_id: UUID) -> list[Order]:
+        return list(
+            self.session.scalars(
+                select(Order)
+                .where(
+                    Order.organization_id == organization_id,
+                    Order.customer_id == customer_id,
+                    Order.deleted_at.is_(None),
+                )
+                .order_by(Order.created_at.desc())
+            )
+        )
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        customer_id: UUID,
+        quote_id: UUID | None,
+        total_amount: float,
+        notes: str | None,
+        created_by: UUID | None,
+        due_date: datetime | None = None,
+    ) -> Order:
+        order = Order(
+            organization_id=organization_id,
+            customer_id=customer_id,
+            quote_id=quote_id,
+            total_amount=total_amount,
+            notes=notes,
+            created_by=created_by,
+            due_date=due_date,
+        )
+        self.session.add(order)
+        self.session.flush()
+        return order
+
+    def update_status(self, order: Order, *, new_status: str) -> None:
+        order.status = new_status
+        self.session.flush()
+
+    def update_total_amount(self, order: Order, *, total_amount: float) -> None:
+        order.total_amount = total_amount
+        self.session.flush()
+
+    def soft_delete(self, order: Order) -> None:
+        order.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+
+class OrderItemRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, order_id: UUID, item_id: UUID) -> OrderItem | None:
+        # organization_id isn't load-bearing here (order_id already pins
+        # the tenant) - accepted so this matches the Firestore repository's
+        # signature (see infrastructure/repositories.py), and used as a
+        # defense-in-depth filter since the column exists.
+        return self.session.scalar(
+            select(OrderItem).where(
+                OrderItem.id == item_id,
+                OrderItem.order_id == order_id,
+                OrderItem.organization_id == organization_id,
+            )
+        )
+
+    def list_for_order(self, organization_id: UUID, order_id: UUID) -> list[OrderItem]:
+        return list(
+            self.session.scalars(
+                select(OrderItem)
+                .where(
+                    OrderItem.order_id == order_id,
+                    OrderItem.organization_id == organization_id,
+                )
+                .order_by(OrderItem.created_at)
+            )
+        )
+
+    def list_for_orders(
+        self, organization_id: UUID, order_ids: list[UUID]
+    ) -> dict[UUID, list[OrderItem]]:
+        """Items of many orders in one query (instead of one per order)."""
+        result: dict[UUID, list[OrderItem]] = {oid: [] for oid in order_ids}
+        if not order_ids:
+            return result
+        for item in self.session.scalars(
+            select(OrderItem)
+            .where(
+                OrderItem.order_id.in_(order_ids),
+                OrderItem.organization_id == organization_id,
+            )
+            .order_by(OrderItem.created_at)
+        ):
+            result.setdefault(item.order_id, []).append(item)
+        return result
+
+    def create(
+        self,
+        *,
+        order_id: UUID,
+        organization_id: UUID,
+        project_version_id: UUID | None,
+        product_id: UUID | None,
+        machine_id: UUID | None,
+        material_id: UUID | None,
+        quantity: int,
+        unit_cost: float | None,
+        unit_price: float | None,
+    ) -> OrderItem:
+        item = OrderItem(
+            order_id=order_id,
+            organization_id=organization_id,
+            project_version_id=project_version_id,
+            product_id=product_id,
+            machine_id=machine_id,
+            material_id=material_id,
+            quantity=quantity,
+            unit_cost=unit_cost,
+            unit_price=unit_price,
+        )
+        self.session.add(item)
+        self.session.flush()
+        return item
+
+    def update(
+        self,
+        item: OrderItem,
+        *,
+        product_id: UUID | None = None,
+        quantity: int | None,
+        unit_cost: float | None,
+        unit_price: float | None,
+    ) -> None:
+        if product_id is not None:
+            item.product_id = product_id
+        if quantity is not None:
+            item.quantity = quantity
+        if unit_cost is not None:
+            item.unit_cost = unit_cost
+        if unit_price is not None:
+            item.unit_price = unit_price
+        self.session.flush()
+
+    def delete(self, item: OrderItem) -> None:
+        self.session.delete(item)
+        self.session.flush()
+
+
+class FinancialTransactionRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, transaction_id: UUID) -> FinancialTransaction | None:
+        return self.session.scalar(
+            select(FinancialTransaction).where(
+                FinancialTransaction.id == transaction_id,
+                FinancialTransaction.organization_id == organization_id,
+                FinancialTransaction.deleted_at.is_(None),
+            )
+        )
+
+    def soft_delete(self, transaction: FinancialTransaction) -> None:
+        transaction.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def list_for_org(
+        self,
+        organization_id: UUID,
+        *,
+        type: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[FinancialTransaction]:
+        stmt = select(FinancialTransaction).where(
+            FinancialTransaction.organization_id == organization_id,
+            FinancialTransaction.deleted_at.is_(None),
+        )
+        if type is not None:
+            stmt = stmt.where(FinancialTransaction.type == type)
+        if start_date is not None:
+            stmt = stmt.where(FinancialTransaction.created_at >= start_date)
+        if end_date is not None:
+            stmt = stmt.where(FinancialTransaction.created_at <= end_date)
+        return list(self.session.scalars(stmt.order_by(FinancialTransaction.created_at.desc())))
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        type: str,
+        category: str,
+        cost_center: str | None,
+        amount: float,
+        reference_order_id: UUID | None,
+        due_date: date | None,
+        paid_at: datetime | None,
+        created_by: UUID | None,
+    ) -> FinancialTransaction:
+        transaction = FinancialTransaction(
+            organization_id=organization_id,
+            type=type,
+            category=category,
+            cost_center=cost_center,
+            amount=amount,
+            reference_order_id=reference_order_id,
+            due_date=due_date,
+            paid_at=paid_at,
+            created_by=created_by,
+        )
+        self.session.add(transaction)
+        self.session.flush()
+        return transaction
+
+    def mark_paid(self, transaction: FinancialTransaction) -> None:
+        transaction.paid_at = datetime.now(UTC)
+        self.session.flush()
+
+
+class MachineRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, machine_id: UUID) -> Machine | None:
+        return self.session.scalar(
+            select(Machine).where(
+                Machine.id == machine_id,
+                Machine.organization_id == organization_id,
+                Machine.deleted_at.is_(None),
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[Machine]:
+        return list(
+            self.session.scalars(
+                select(Machine)
+                .where(Machine.organization_id == organization_id, Machine.deleted_at.is_(None))
+                .order_by(Machine.created_at)
+            )
+        )
+
+    def soft_delete(self, machine: Machine) -> None:
+        machine.deleted_at = datetime.now(UTC)
+        self.session.flush()
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        brand: str | None,
+        model: str | None,
+        technology: str,
+        build_volume_x_mm: float | None,
+        build_volume_y_mm: float | None,
+        build_volume_z_mm: float | None,
+        power_watts: float | None,
+        cost_per_hour: float | None,
+        speed_profile: dict | None,
+        compatible_materials: list | None,
+    ) -> Machine:
+        machine = Machine(
+            organization_id=organization_id,
+            name=name,
+            brand=brand,
+            model=model,
+            technology=technology,
+            build_volume_x_mm=build_volume_x_mm,
+            build_volume_y_mm=build_volume_y_mm,
+            build_volume_z_mm=build_volume_z_mm,
+            power_watts=power_watts,
+            cost_per_hour=cost_per_hour,
+            speed_profile=speed_profile,
+            compatible_materials=compatible_materials,
+        )
+        self.session.add(machine)
+        self.session.flush()
+        return machine
+
+
+class PlanRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, plan_id: UUID) -> Plan | None:
+        return self.session.get(Plan, plan_id)
+
+    def get_by_code(self, code: str) -> Plan | None:
+        return self.session.scalar(select(Plan).where(Plan.code == code))
+
+    def list_active(self) -> list[Plan]:
+        return list(
+            self.session.scalars(
+                select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.created_at)
+            )
+        )
+
+    def create(
+        self, *, code: str, name: str, is_active: bool, trial_period_days: int | None
+    ) -> Plan:
+        plan = Plan(code=code, name=name, is_active=is_active, trial_period_days=trial_period_days)
+        self.session.add(plan)
+        self.session.flush()
+        return plan
+
+
+class PlanEntitlementRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get_for_plan(self, plan_id: UUID, key: str) -> PlanEntitlement | None:
+        return self.session.scalar(
+            select(PlanEntitlement).where(
+                PlanEntitlement.plan_id == plan_id, PlanEntitlement.key == key
+            )
+        )
+
+    def list_for_plan(self, plan_id: UUID) -> list[PlanEntitlement]:
+        return list(
+            self.session.scalars(
+                select(PlanEntitlement).where(PlanEntitlement.plan_id == plan_id)
+            )
+        )
+
+    def create(
+        self,
+        *,
+        plan_id: UUID,
+        key: str,
+        limit_type: str,
+        bool_value: bool | None = None,
+        numeric_value: float | None = None,
+    ) -> PlanEntitlement:
+        entitlement = PlanEntitlement(
+            plan_id=plan_id,
+            key=key,
+            limit_type=limit_type,
+            bool_value=bool_value,
+            numeric_value=numeric_value,
+        )
+        self.session.add(entitlement)
+        self.session.flush()
+        return entitlement
+
+
+class SubscriptionRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, subscription_id: UUID) -> Subscription | None:
+        return self.session.get(Subscription, subscription_id)
+
+    def get_by_organization(self, organization_id: UUID) -> Subscription | None:
+        return self.session.scalar(
+            select(Subscription).where(Subscription.organization_id == organization_id)
+        )
+
+    def create(
+        self,
+        *,
+        organization_id: UUID,
+        plan_id: UUID,
+        status: str,
+        current_period_start: datetime,
+        current_period_end: datetime,
+        trial_start: datetime | None,
+        trial_end: datetime | None,
+        external_provider: str,
+        external_subscription_id: str | None,
+        external_customer_id: str | None,
+    ) -> Subscription:
+        subscription = Subscription(
+            organization_id=organization_id,
+            plan_id=plan_id,
+            status=status,
+            current_period_start=current_period_start,
+            current_period_end=current_period_end,
+            trial_start=trial_start,
+            trial_end=trial_end,
+            external_provider=external_provider,
+            external_subscription_id=external_subscription_id,
+            external_customer_id=external_customer_id,
+        )
+        self.session.add(subscription)
+        self.session.flush()
+        return subscription
+
+    def update_status(self, subscription: Subscription, *, status: str) -> None:
+        subscription.status = status
+        self.session.flush()
+
+    def update_plan(self, subscription: Subscription, *, plan_id: UUID) -> None:
+        subscription.plan_id = plan_id
+        self.session.flush()
+
+    def mark_cancel_at_period_end(self, subscription: Subscription, *, value: bool) -> None:
+        subscription.cancel_at_period_end = value
+        self.session.flush()
+
+    def mark_canceled_now(self, subscription: Subscription) -> None:
+        subscription.status = "canceled"
+        subscription.canceled_at = datetime.now(UTC)
+        self.session.flush()
+
+
+class BillingEventRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get_by_provider_and_external_id(
+        self, provider: str, external_event_id: str
+    ) -> BillingEvent | None:
+        return self.session.scalar(
+            select(BillingEvent).where(
+                BillingEvent.provider == provider,
+                BillingEvent.external_event_id == external_event_id,
+            )
+        )
+
+    def list_for_org(self, organization_id: UUID) -> list[BillingEvent]:
+        return list(
+            self.session.scalars(
+                select(BillingEvent)
+                .where(BillingEvent.organization_id == organization_id)
+                .order_by(BillingEvent.received_at.desc())
+            )
+        )
+
+    def create(
+        self,
+        *,
+        provider: str,
+        external_event_id: str,
+        event_type: str,
+        organization_id: UUID | None,
+        payload: dict,
+    ) -> BillingEvent:
+        event = BillingEvent(
+            provider=provider,
+            external_event_id=external_event_id,
+            event_type=event_type,
+            organization_id=organization_id,
+            payload=payload,
+        )
+        self.session.add(event)
+        self.session.flush()
+        return event
+
+    def mark_processed(self, event: BillingEvent) -> None:
+        event.status = "processed"
+        event.processed_at = datetime.now(UTC)
+        self.session.flush()
+
+    def mark_failed(self, event: BillingEvent, *, error_message: str) -> None:
+        event.status = "failed"
+        event.error_message = error_message
+        event.processed_at = datetime.now(UTC)
+        self.session.flush()
+
+
+
+class StoreVisitRepository:
+    """Contador de visitas e presença da vitrine pública."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def mark_seen(self, organization_id: UUID, visitor_id: str, *, now: datetime) -> None:
+        visitor = self.session.get(StoreVisitor, (organization_id, visitor_id))
+        if visitor is None:
+            self.session.add(
+                StoreVisitor(organization_id=organization_id, visitor_id=visitor_id, seen_at=now)
+            )
+        else:
+            visitor.seen_at = now
+        self.session.commit()
+
+    def record_visit(
+        self, organization_id: UUID, visitor_id: str, *, now: datetime, day: str
+    ) -> None:
+        visitor = self.session.get(StoreVisitor, (organization_id, visitor_id))
+        unique = visitor is None or visitor.last_day != day
+        if visitor is None:
+            self.session.add(
+                StoreVisitor(
+                    organization_id=organization_id,
+                    visitor_id=visitor_id,
+                    seen_at=now,
+                    last_day=day,
+                )
+            )
+        else:
+            visitor.seen_at = now
+            visitor.last_day = day
+        row = self.session.get(StoreVisitDay, (organization_id, day))
+        if row is None:
+            self.session.add(
+                StoreVisitDay(
+                    organization_id=organization_id,
+                    day=day,
+                    views=1,
+                    unique_visitors=1 if unique else 0,
+                )
+            )
+        else:
+            row.views += 1
+            if unique:
+                row.unique_visitors += 1
+        self.session.commit()
+
+    def online_count(self, organization_id: UUID, *, since: datetime) -> int:
+        return int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(StoreVisitor)
+                .where(
+                    StoreVisitor.organization_id == organization_id,
+                    StoreVisitor.seen_at >= since,
+                )
+            )
+            or 0
+        )
+
+    def add_whatsapp_click(self, organization_id: UUID, *, day: str) -> None:
+        row = self.session.get(StoreVisitDay, (organization_id, day))
+        if row is None:
+            self.session.add(
+                StoreVisitDay(
+                    organization_id=organization_id,
+                    day=day,
+                    views=0,
+                    unique_visitors=0,
+                    whatsapp_clicks=1,
+                )
+            )
+        else:
+            row.whatsapp_clicks += 1
+        self.session.commit()
+
+    def add_product_view(self, organization_id: UUID, *, day: str, product_id: str) -> None:
+        row = self.session.get(StoreProductDay, (organization_id, day, product_id))
+        if row is None:
+            self.session.add(
+                StoreProductDay(
+                    organization_id=organization_id, day=day, product_id=product_id, views=1
+                )
+            )
+        else:
+            row.views += 1
+        self.session.commit()
+
+    def list_days(
+        self, organization_id: UUID, *, from_day: str, to_day: str
+    ) -> list[tuple[str, int, int, int]]:
+        """(dia, visitas, visitantes únicos, cliques no WhatsApp)."""
+        rows = self.session.execute(
+            select(
+                StoreVisitDay.day,
+                StoreVisitDay.views,
+                StoreVisitDay.unique_visitors,
+                StoreVisitDay.whatsapp_clicks,
+            ).where(
+                StoreVisitDay.organization_id == organization_id,
+                StoreVisitDay.day >= from_day,
+                StoreVisitDay.day <= to_day,
+            )
+        ).all()
+        return [(day, int(v), int(u), int(w)) for day, v, u, w in rows]
+
+    def list_product_days(
+        self, organization_id: UUID, *, from_day: str, to_day: str
+    ) -> list[tuple[str, str, int]]:
+        """(dia, id do produto, aberturas)."""
+        rows = self.session.execute(
+            select(StoreProductDay.day, StoreProductDay.product_id, StoreProductDay.views).where(
+                StoreProductDay.organization_id == organization_id,
+                StoreProductDay.day >= from_day,
+                StoreProductDay.day <= to_day,
+            )
+        ).all()
+        return [(day, pid, int(v)) for day, pid, v in rows]
+
+    def prune_visitors(self, organization_id: UUID, *, before: datetime) -> None:
+        old = self.session.scalars(
+            select(StoreVisitor).where(
+                StoreVisitor.organization_id == organization_id,
+                StoreVisitor.seen_at < before,
+            )
+        ).all()
+        for visitor in old:
+            self.session.delete(visitor)
+        if old:
+            self.session.commit()

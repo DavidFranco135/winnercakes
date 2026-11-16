@@ -1,0 +1,1507 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+import { apiFetch, ApiError, uploadImage } from "@/lib/api-client";
+import { formatCurrency } from "@/lib/format";
+import type { CostProfile, Machine, Material, Product, ProductCost, ProductCostItem, Quote } from "@/lib/types";
+import type { StoreAdminResponse, StoreCategory, StoreSettings } from "@/lib/store";
+import { refreshPublicStoreCache } from "@/lib/store";
+import { AppShell } from "@/components/AppShell";
+import { clearDraft, readDraft, writeDraft } from "@/lib/drafts";
+import { SearchInput } from "@/components/SearchInput";
+import { matchesSearch, normalizeSearch } from "@/lib/search";
+import { IMG_WIDTH, imgSrc } from "@/lib/img";
+import { focusStyle } from "@/lib/focus";
+
+type BomLine = { material_id: string; quantity_g: string };
+
+// Linhas da conta de preço, na ordem da fórmula (domain/calculator/engine.py).
+const CALC_ROWS: { key: keyof ProductCost; label: string }[] = [
+  { key: "material_cost", label: "Material (+ itens extras)" },
+  { key: "waste_cost", label: "Perdas (trincas e quebras)" },
+  { key: "energy_cost", label: "Luz do forno" },
+  { key: "machine_cost", label: "Máquina / depreciação" },
+  { key: "labor_cost", label: "Mão de obra" },
+  { key: "packaging_cost", label: "Embalagem" },
+  { key: "fees", label: "Taxas" },
+  { key: "production_cost", label: "= Custo de produção" },
+];
+
+function marginOf(b: Partial<ProductCost>): number | null {
+  const production = Number(b.production_cost ?? 0);
+  if (!production) return null;
+  const beforeTax = Number(b.suggested_price ?? 0) - Number(b.tax_amount ?? 0);
+  return (beforeTax / production - 1) * 100;
+}
+
+type ProductFormDraft = {
+  editingId: string | null;
+  mode: "simples" | "completo";
+  name: string;
+  description: string;
+  printTimeHours: string;
+  machineId: string;
+  bomLines: BomLine[];
+  manualPrice: string;
+  size: string;
+  photoUrls: string[];
+  stockQuantity: string;
+  formCategoryIds: string[];
+  formPriceOnRequest: boolean;
+  formVisible: boolean;
+};
+
+function newCategoryId(): string {
+  return `cat-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Coloca/tira o produto de cada categoria conforme a seleção do formulário.
+function assignProduct(categories: StoreCategory[], productId: string, selected: string[]): StoreCategory[] {
+  return categories.map((c) => {
+    const has = c.product_ids.includes(productId);
+    const wants = selected.includes(c.id);
+    if (has === wants) return c;
+    return {
+      ...c,
+      product_ids: wants ? [...c.product_ids, productId] : c.product_ids.filter((id) => id !== productId),
+    };
+  });
+}
+
+export default function ProdutosPage() {
+  const { status, accessToken, currentOrganizationId } = useAuth();
+  const router = useRouter();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [showAudit, setShowAudit] = useState(false);
+  const [calcOpenId, setCalcOpenId] = useState<string | null>(null);
+  const [isFixingPrices, setIsFixingPrices] = useState(false);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [costProfiles, setCostProfiles] = useState<CostProfile[]>([]);
+  const [costs, setCosts] = useState<Record<string, ProductCost | null>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editingIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    editingIdRef.current = editingId;
+  }, [editingId]);
+  const [mode, setMode] = useState<"simples" | "completo">("completo");
+
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [printTimeHours, setPrintTimeHours] = useState("");
+  const [machineId, setMachineId] = useState("");
+  const [bomLines, setBomLines] = useState<BomLine[]>([{ material_id: "", quantity_g: "" }]);
+  const [manualPrice, setManualPrice] = useState("");
+  const [size, setSize] = useState("");
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [stockQuantity, setStockQuantity] = useState("");
+  const [formCategoryIds, setFormCategoryIds] = useState<string[]>([]);
+  const [formPriceOnRequest, setFormPriceOnRequest] = useState(false);
+  // Link do modelo 3D (.glb) mostrado no "Ver em 3D" da loja.
+  const [formModelUrl, setFormModelUrl] = useState("");
+  // Desconto (% OFF) deste produto na loja.
+  const [formDiscount, setFormDiscount] = useState("");
+  // Fora das promoções (Black Friday / desconto por valor do pedido).
+  const [formPromoExcluded, setFormPromoExcluded] = useState(false);
+  const [formVisible, setFormVisible] = useState(true);
+  const [search, setSearch] = useState("");
+  const [visibilityFilter, setVisibilityFilter] = useState<"all" | "visible" | "hidden">("all");
+  const formRef = useRef<HTMLFormElement>(null);
+  const [staleDraftNotice, setStaleDraftNotice] = useState(false);
+  const loadedRef = useRef<[Product[], Material[], Machine[]] | null>(null);
+
+  // O formulário fica no topo da lista; ao abrir (novo ou "Editar" num
+  // produto lá embaixo) leva a tela até ele, senão parece que nada aconteceu.
+  useEffect(() => {
+    if (showForm) formRef.current?.scrollIntoView({ block: "start" });
+  }, [showForm, editingId]);
+
+  // As categorias moram nas configurações da loja (mesmo lugar de destaque/oculto).
+  const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
+  const [storeSlug, setStoreSlug] = useState<string | undefined>(undefined);
+  const [showCategories, setShowCategories] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [isSavingCategories, setIsSavingCategories] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
+
+  // Um rascunho recuperado (ou um formulário aberto há muito tempo) pode
+  // apontar para um produto, máquina ou material que já foi apagado — aí a
+  // API recusa o salvar. Solta essas referências: o produto apagado vira
+  // "novo produto" e as linhas de material/máquina inexistentes saem.
+  const dropMissingReferences = useCallback(
+    (productsData: Product[], materialsData: Material[], machinesData: Machine[]) => {
+      const productIds = new Set(productsData.map((p) => p.id));
+      const materialIds = new Set(materialsData.map((m) => m.id));
+      const machineIds = new Set(machinesData.map((m) => m.id));
+      setEditingId((id) => (id && !productIds.has(id) ? null : id));
+      setStaleDraftNotice((shown) => shown || (editingIdRef.current != null && !productIds.has(editingIdRef.current)));
+      setMachineId((id) => (id && !machineIds.has(id) ? "" : id));
+      setBomLines((lines) => {
+        const kept = lines.filter((l) => !l.material_id || materialIds.has(l.material_id));
+        if (kept.length === lines.length) return lines;
+        return kept.length > 0 ? kept : [{ material_id: "", quantity_g: "" }];
+      });
+    },
+    []
+  );
+
+  // Rascunho do formulário aberto: se o celular fechar o app em segundo
+  // plano, o que estava preenchido volta ao reabrir.
+  const productDraftKey = `produtos-form:${currentOrganizationId}`;
+  const draftChecked = useRef(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  useEffect(() => {
+    if (!currentOrganizationId || draftChecked.current) return;
+    const id = setTimeout(() => {
+      draftChecked.current = true;
+      const d = readDraft<ProductFormDraft>(productDraftKey);
+      if (!d) return;
+      setEditingId(d.editingId);
+      setMode(d.mode);
+      setName(d.name);
+      setDescription(d.description);
+      setPrintTimeHours(d.printTimeHours);
+      setMachineId(d.machineId);
+      setBomLines(d.bomLines.length > 0 ? d.bomLines : [{ material_id: "", quantity_g: "" }]);
+      setManualPrice(d.manualPrice);
+      setSize(d.size);
+      setPhotoUrls(d.photoUrls);
+      setStockQuantity(d.stockQuantity);
+      setFormCategoryIds(d.formCategoryIds);
+      setFormPriceOnRequest(d.formPriceOnRequest);
+      setFormVisible(d.formVisible);
+      setShowForm(true);
+      setDraftRestored(true);
+      if (loadedRef.current) {
+        editingIdRef.current = d.editingId;
+        dropMissingReferences(...loadedRef.current);
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [currentOrganizationId, productDraftKey, dropMissingReferences]);
+
+  useEffect(() => {
+    if (!draftChecked.current || !currentOrganizationId) return;
+    if (!showForm) {
+      clearDraft(productDraftKey);
+      return;
+    }
+    writeDraft<ProductFormDraft>(productDraftKey, {
+      editingId,
+      mode,
+      name,
+      description,
+      printTimeHours,
+      machineId,
+      bomLines,
+      manualPrice,
+      size,
+      photoUrls,
+      stockQuantity,
+      formCategoryIds,
+      formPriceOnRequest,
+      formVisible,
+    });
+  }, [
+    currentOrganizationId,
+    productDraftKey,
+    showForm,
+    editingId,
+    mode,
+    name,
+    description,
+    printTimeHours,
+    machineId,
+    bomLines,
+    manualPrice,
+    size,
+    photoUrls,
+    stockQuantity,
+    formCategoryIds,
+    formPriceOnRequest,
+    formVisible,
+  ]);
+
+  const materialName = useCallback(
+    (id: string) => materials.find((m) => m.id === id)?.name ?? "—",
+    [materials]
+  );
+
+  const load = useCallback(async () => {
+    if (!accessToken || !currentOrganizationId) return;
+    setIsLoading(true);
+    try {
+      const [productsData, materialsData, machinesData, profilesData, store, quotesData] = await Promise.all([
+        apiFetch<Product[]>(`${orgPath}/products`, { accessToken }),
+        apiFetch<Material[]>(`${orgPath}/materials`, { accessToken }),
+        apiFetch<Machine[]>(`${orgPath}/machines`, { accessToken }),
+        apiFetch<CostProfile[]>(`${orgPath}/cost-profiles`, { accessToken }),
+        apiFetch<StoreAdminResponse>(`${orgPath}/store`, { accessToken }).catch(() => null),
+        apiFetch<Quote[]>(`${orgPath}/quotes`, { accessToken }).catch(() => [] as Quote[]),
+      ]);
+      setProducts(productsData);
+      setQuotes(quotesData);
+      setStoreSettings(store ? { ...store.settings, categories: store.settings.categories ?? [] } : null);
+      setStoreSlug(store?.slug);
+      setMaterials(materialsData);
+      setMachines(machinesData);
+      setCostProfiles(profilesData);
+      loadedRef.current = [productsData, materialsData, machinesData];
+      dropMissingReferences(productsData, materialsData, machinesData);
+
+      const defaultProfile = profilesData.find((p) => p.is_default) ?? profilesData[0];
+      if (defaultProfile) {
+        try {
+          const items = await apiFetch<ProductCostItem[]>(
+            `${orgPath}/products/costs?cost_profile_id=${defaultProfile.id}`,
+            { accessToken }
+          );
+          setCosts(Object.fromEntries(items.map((item) => [item.product_id, item])));
+        } catch {
+          setCosts({});
+        }
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao carregar produtos.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [accessToken, currentOrganizationId, orgPath, dropMissingReferences]);
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/login");
+      return;
+    }
+    if (status !== "authenticated") return;
+    const timeoutId = setTimeout(load, 0);
+    return () => clearTimeout(timeoutId);
+  }, [status, router, load]);
+
+  function updateBomLine(index: number, patch: Partial<BomLine>) {
+    setBomLines((lines) => lines.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+
+  function addBomLine() {
+    setBomLines((lines) => [...lines, { material_id: "", quantity_g: "" }]);
+  }
+
+  function removeBomLine(index: number) {
+    setBomLines((lines) => lines.filter((_, i) => i !== index));
+  }
+
+  const categories = storeSettings?.categories ?? [];
+
+  async function saveCategories(next: StoreCategory[]): Promise<boolean> {
+    return saveStore({ categories: next });
+  }
+
+  async function saveStore(patch: Partial<StoreSettings>): Promise<boolean> {
+    if (!accessToken || !storeSettings) return false;
+    setIsSavingCategories(true);
+    setError(null);
+    try {
+      const saved = await apiFetch<StoreAdminResponse>(`${orgPath}/store`, {
+        method: "PUT",
+        accessToken,
+        body: JSON.stringify({ ...storeSettings, ...patch }),
+      });
+      setStoreSettings({ ...saved.settings, categories: saved.settings.categories ?? [] });
+      refreshPublicStoreCache(saved.slug);
+      return true;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar na loja.");
+      return false;
+    } finally {
+      setIsSavingCategories(false);
+    }
+  }
+
+  async function handleAddCategory(event: React.FormEvent) {
+    event.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) return;
+    if (await saveCategories([...categories, { id: newCategoryId(), name, product_ids: [], cover_url: "" }])) {
+      setNewCategoryName("");
+    }
+  }
+
+  async function handleRenameCategory(id: string) {
+    const name = renameValue.trim();
+    if (!name) return;
+    if (await saveCategories(categories.map((c) => (c.id === id ? { ...c, name } : c)))) {
+      setRenamingId(null);
+    }
+  }
+
+  async function handleDeleteCategory(category: StoreCategory) {
+    if (!window.confirm(`Apagar a categoria "${category.name}"? Os produtos não são apagados.`)) return;
+    if (await saveCategories(categories.filter((c) => c.id !== category.id))) {
+      if (categoryFilter === category.id) setCategoryFilter(null);
+    }
+  }
+
+  const hiddenIds = storeSettings?.hidden_product_ids ?? [];
+  const isHidden = (productId: string) => hiddenIds.includes(productId);
+
+  async function toggleVisibility(product: Product) {
+    await saveStore({
+      hidden_product_ids: isHidden(product.id)
+        ? hiddenIds.filter((id) => id !== product.id)
+        : [...hiddenIds, product.id],
+    });
+  }
+
+  // --- Conferência de preços --------------------------------------------------
+  // Peças salvas na Precificação, pelo nome (a mais recente vale).
+  const pieceByName = new Map<string, Quote>();
+  for (const q of [...quotes].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    if (q.piece_name?.trim()) pieceByName.set(normalizeSearch(q.piece_name), q);
+  }
+  const effectivePrice = (p: Product): number | null => p.manual_price ?? costs[p.id]?.suggested_price ?? null;
+  const priceMismatches = products
+    .map((p) => {
+      const piece = pieceByName.get(normalizeSearch(p.name));
+      if (!piece) return null;
+      const piecePrice = Number((piece.final_price ?? piece.suggested_price).toFixed(2));
+      const current = effectivePrice(p);
+      if (current != null && Math.abs(current - piecePrice) < 0.01) return null;
+      return { product: p, current, piecePrice, calculated: p.manual_price == null };
+    })
+    .filter((m): m is { product: Product; current: number | null; piecePrice: number; calculated: boolean } => m !== null);
+  const duplicateGroups = Object.values(
+    products.reduce<Record<string, Product[]>>((groups, p) => {
+      const key = normalizeSearch(p.name);
+      (groups[key] ??= []).push(p);
+      return groups;
+    }, {})
+  ).filter((group) => group.length > 1);
+
+  async function applyPiecePrices(items: { product: Product; piecePrice: number }[]) {
+    if (!accessToken || items.length === 0) return;
+    setIsFixingPrices(true);
+    setError(null);
+    try {
+      for (const { product, piecePrice } of items) {
+        await apiFetch(`${orgPath}/products/${product.id}`, {
+          method: "PATCH",
+          accessToken,
+          body: JSON.stringify({ manual_price: piecePrice }),
+        });
+      }
+      refreshPublicStoreCache(storeSlug);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao corrigir preços.");
+    } finally {
+      setIsFixingPrices(false);
+    }
+  }
+
+  const visibleProducts = products.filter(
+    (product) =>
+      matchesSearch(search, product.name, product.description) &&
+      (visibilityFilter === "all" || (visibilityFilter === "hidden") === isHidden(product.id)) &&
+      (!categoryFilter ||
+        categories.some((c) => c.id === categoryFilter && c.product_ids.includes(product.id)))
+  );
+
+  function toggleFormCategory(id: string) {
+    setFormCategoryIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  }
+
+  function resetForm() {
+    setName("");
+    setDescription("");
+    setPrintTimeHours("");
+    setMachineId("");
+    setBomLines([{ material_id: "", quantity_g: "" }]);
+    setManualPrice("");
+    setSize("");
+    setPhotoUrls([]);
+    setStockQuantity("");
+    setFormCategoryIds([]);
+    setFormPriceOnRequest(false);
+    setFormModelUrl("");
+    setFormDiscount("");
+    setFormPromoExcluded(false);
+    setFormVisible(true);
+    setMode("completo");
+    setEditingId(null);
+    setShowForm(false);
+    setDraftRestored(false);
+    setStaleDraftNotice(false);
+  }
+
+  async function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0 || !accessToken) return;
+    event.target.value = "";
+    setIsUploadingPhoto(true);
+    setError(null);
+    try {
+      for (const file of files) {
+        const { url } = await uploadImage(`${orgPath}/uploads/image`, accessToken, file);
+        setPhotoUrls((urls) => [...urls, url]);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao enviar foto.");
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  }
+
+  function removePhoto(url: string) {
+    setPhotoUrls((urls) => urls.filter((u) => u !== url));
+  }
+
+  function setCoverPhoto(url: string) {
+    setPhotoUrls((urls) => [url, ...urls.filter((u) => u !== url)]);
+  }
+
+  // Passa para preço digitado à mão, já preenchido com o preço calculado
+  // (para o usuário só ajustar em vez de começar do zero).
+  function switchToManualPrice(productId: string | null = editingId) {
+    setMode("simples");
+    const suggested = productId ? costs[productId]?.suggested_price : undefined;
+    setManualPrice((current) => current || (suggested != null ? suggested.toFixed(2) : ""));
+  }
+
+  function startEditWithManualPrice(product: Product) {
+    startEdit(product);
+    switchToManualPrice(product.id);
+  }
+
+  function startEdit(product: Product) {
+    setEditingId(product.id);
+    setName(product.name);
+    setDescription(product.description ?? "");
+    setPrintTimeHours(product.print_time_hours != null ? String(product.print_time_hours) : "");
+    setMachineId(product.machine_id ?? "");
+    setBomLines(
+      product.materials.length > 0
+        ? product.materials.map((l) => ({
+            material_id: l.material_id,
+            quantity_g: String(l.quantity_g),
+          }))
+        : [{ material_id: "", quantity_g: "" }]
+    );
+    setManualPrice(product.manual_price != null ? String(product.manual_price) : "");
+    setSize(product.size ?? "");
+    setPhotoUrls(product.photo_urls ?? []);
+    setStockQuantity(product.stock_quantity != null ? String(product.stock_quantity) : "");
+    setFormCategoryIds(categories.filter((c) => c.product_ids.includes(product.id)).map((c) => c.id));
+    setFormPriceOnRequest(storeSettings?.price_on_request_product_ids?.includes(product.id) ?? false);
+    setFormModelUrl(storeSettings?.model_urls?.[product.id] ?? "");
+    setFormDiscount(String(storeSettings?.product_discounts?.[product.id] ?? ""));
+    setFormPromoExcluded(storeSettings?.promo_excluded_ids?.includes(product.id) ?? false);
+    setFormVisible(!(storeSettings?.hidden_product_ids ?? []).includes(product.id));
+    setMode(product.manual_price != null ? "simples" : "completo");
+    setShowForm(true);
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!accessToken) return;
+    const validLines = mode === "simples" ? [] : bomLines.filter((l) => l.material_id && l.quantity_g);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const body = JSON.stringify({
+        name: name.trim(),
+        description: description.trim() || null,
+        print_time_hours: mode === "simples" ? null : printTimeHours ? Number(printTimeHours) : null,
+        machine_id: mode === "simples" ? null : machineId || null,
+        manual_price: mode === "simples" ? Number(manualPrice) : null,
+        size: size || null,
+        photo_urls: photoUrls,
+        stock_quantity: stockQuantity !== "" ? Number(stockQuantity) : null,
+        materials: validLines.map((l) => ({
+          material_id: l.material_id,
+          quantity_g: Number(l.quantity_g),
+        })),
+      });
+      let productId = editingId;
+      if (editingId) {
+        try {
+          await apiFetch(`${orgPath}/products/${editingId}`, { method: "PATCH", accessToken, body });
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404 && !products.some((p) => p.id === editingId)) {
+            // O produto em edição foi apagado: o formulário continua com tudo
+            // preenchido e o próximo "Salvar" cria um produto novo.
+            setEditingId(null);
+            setStaleDraftNotice(true);
+            throw new ApiError(404, "Esse produto tinha sido apagado. Clique em Salvar de novo para criá-lo como produto novo.");
+          }
+          throw err;
+        }
+      } else {
+        const created = await apiFetch<Product>(`${orgPath}/products`, { method: "POST", accessToken, body });
+        productId = created.id;
+      }
+      if (productId && storeSettings) {
+        const patch: Partial<StoreSettings> = {};
+        const next = assignProduct(categories, productId, formCategoryIds);
+        if (next.some((c, i) => c !== categories[i])) patch.categories = next;
+        const onRequest = storeSettings.price_on_request_product_ids ?? [];
+        if (onRequest.includes(productId) !== formPriceOnRequest) {
+          patch.price_on_request_product_ids = formPriceOnRequest
+            ? [...onRequest, productId]
+            : onRequest.filter((id) => id !== productId);
+        }
+        const models = storeSettings.model_urls ?? {};
+        const modelUrl = formModelUrl.trim();
+        if ((models[productId] ?? "") !== modelUrl) {
+          const nextModels = { ...models };
+          if (modelUrl) nextModels[productId] = modelUrl;
+          else delete nextModels[productId];
+          patch.model_urls = nextModels;
+        }
+        const discounts = storeSettings.product_discounts ?? {};
+        const discount = Math.max(0, Math.min(90, Number(formDiscount.replace(",", ".")) || 0));
+        if ((discounts[productId] ?? 0) !== discount) {
+          const nextDiscounts = { ...discounts };
+          if (discount > 0) nextDiscounts[productId] = discount;
+          else delete nextDiscounts[productId];
+          patch.product_discounts = nextDiscounts;
+        }
+        const excludedNow = storeSettings.promo_excluded_ids ?? [];
+        if (excludedNow.includes(productId) !== formPromoExcluded) {
+          patch.promo_excluded_ids = formPromoExcluded
+            ? [...excludedNow, productId]
+            : excludedNow.filter((id) => id !== productId);
+        }
+        const hiddenNow = storeSettings.hidden_product_ids ?? [];
+        if (hiddenNow.includes(productId) === formVisible) {
+          patch.hidden_product_ids = formVisible
+            ? hiddenNow.filter((id) => id !== productId)
+            : [...hiddenNow, productId];
+        }
+        if (Object.keys(patch).length > 0) await saveStore(patch);
+      }
+      resetForm();
+      refreshPublicStoreCache(storeSlug);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar produto.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDelete(product: Product) {
+    if (!accessToken) return;
+    if (!window.confirm(`Excluir o produto "${product.name}"?`)) return;
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/products/${product.id}`, { method: "DELETE", accessToken });
+      refreshPublicStoreCache(storeSlug);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao excluir produto.");
+    }
+  }
+
+  if (status !== "authenticated") {
+    return (
+      <main className="flex min-h-screen items-center justify-center">
+        <p className="text-neutral-400">Carregando…</p>
+      </main>
+    );
+  }
+
+  return (
+    <AppShell title="Produtos">
+      <div className="mx-auto max-w-5xl space-y-6">
+        {error && <p className="rounded bg-red-950 p-2 text-sm text-red-300">{error}</p>}
+
+        {materials.length === 0 && !isLoading && (
+          <p className="rounded-lg border border-yellow-800 bg-yellow-950/40 px-4 py-3 text-sm text-yellow-300">
+            Sem materiais cadastrados ainda — isso só afeta o modo &ldquo;Completo&rdquo;; o modo
+            &ldquo;Simples&rdquo; não precisa de materiais.
+          </p>
+        )}
+        {costProfiles.length === 0 && !isLoading && (
+          <p className="rounded-lg border border-yellow-800 bg-yellow-950/40 px-4 py-3 text-sm text-yellow-300">
+            Cadastre um perfil de custo na aba Precificação (Perfil de custo) para ver o custo/preço calculado aqui.
+          </p>
+        )}
+
+        {!isLoading && (priceMismatches.length > 0 || duplicateGroups.length > 0) && (
+          <section className="space-y-3 rounded-xl border border-yellow-800/70 bg-yellow-950/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="font-medium text-yellow-200">Conferência de preços</h2>
+                <p className="text-xs text-yellow-300/80">
+                  {priceMismatches.length > 0 && `${priceMismatches.length} produto(s) com preço diferente da Precificação`}
+                  {priceMismatches.length > 0 && duplicateGroups.length > 0 && " · "}
+                  {duplicateGroups.length > 0 && `${duplicateGroups.length} nome(s) repetido(s)`}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAudit((v) => !v)}
+                className="rounded-lg border border-yellow-800 px-3 py-1.5 text-sm text-yellow-200 hover:bg-yellow-950/60"
+              >
+                {showAudit ? "Fechar" : "Conferir"}
+              </button>
+            </div>
+
+            {showAudit && (
+              <div className="space-y-4 border-t border-yellow-900/60 pt-3">
+                {(() => {
+                  // Calculados = nenhum preço guardado (vieram da criação automática
+                  // antiga): seguros de corrigir em lote. Preço digitado por você:
+                  // só um por um, para decidir caso a caso.
+                  const calculated = priceMismatches.filter((m) => m.calculated);
+                  const typed = priceMismatches.filter((m) => !m.calculated);
+                  const row = (m: (typeof priceMismatches)[number]) => (
+                    <li key={m.product.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                      <span className="min-w-0 flex-1 truncate">{m.product.name}</span>
+                      <span className="text-xs text-neutral-400">
+                        Aqui: {m.current != null ? formatCurrency(m.current) : "sem preço"}
+                        {m.calculated ? " (calculado)" : " (digitado por você)"} · Precificação:{" "}
+                        <span className="font-medium text-green-400">{formatCurrency(m.piecePrice)}</span>
+                      </span>
+                      <button
+                        onClick={() => applyPiecePrices([m])}
+                        disabled={isFixingPrices}
+                        className="text-xs text-yellow-300 hover:underline disabled:opacity-50"
+                      >
+                        Usar {formatCurrency(m.piecePrice)}
+                      </button>
+                    </li>
+                  );
+                  return (
+                    <>
+                      {calculated.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs text-neutral-400">
+                              Sem preço guardado — o sistema recalcula pela receita (sem itens extras, mão de obra e
+                              com a margem do perfil). Use o preço da Precificação:
+                            </p>
+                            <button
+                              onClick={() => applyPiecePrices(calculated)}
+                              disabled={isFixingPrices}
+                              className="rounded bg-yellow-600 px-3 py-1.5 text-xs font-semibold text-black hover:bg-yellow-500 disabled:opacity-50"
+                            >
+                              {isFixingPrices ? "Corrigindo…" : `Usar o preço da Precificação nestes (${calculated.length})`}
+                            </button>
+                          </div>
+                          <ul className="divide-y divide-neutral-800 rounded border border-neutral-800">{calculated.map(row)}</ul>
+                        </div>
+                      )}
+                      {typed.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs text-neutral-400">
+                            Preço digitado por você diferente da peça na Precificação — confira e decida um por um:
+                          </p>
+                          <ul className="divide-y divide-neutral-800 rounded border border-neutral-800">{typed.map(row)}</ul>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {duplicateGroups.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-neutral-400">
+                      Produtos com o mesmo nome — no pedido é fácil escolher o errado. Confira e exclua o que sobrar.
+                    </p>
+                    <ul className="space-y-2">
+                      {duplicateGroups.map((group) => (
+                        <li key={group[0].id} className="rounded border border-neutral-800 px-3 py-2 text-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium">{group[0].name.trim()}</span>
+                            <button
+                              onClick={() => {
+                                setSearch(group[0].name.trim());
+                                setVisibilityFilter("all");
+                                setCategoryFilter(null);
+                              }}
+                              className="text-xs text-blue-400 hover:underline"
+                            >
+                              Ver na lista
+                            </button>
+                          </div>
+                          <p className="mt-1 text-xs text-neutral-400">
+                            {group
+                              .map((p) => {
+                                const price = effectivePrice(p);
+                                return `${price != null ? formatCurrency(price) : "sem preço"}${p.manual_price == null ? " (calculado)" : ""}`;
+                              })
+                              .join("  ·  ")}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {storeSettings && (
+          <section className="space-y-3 rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="font-medium">Categorias</h2>
+                <p className="text-xs text-neutral-500">
+                  Aparecem na loja pública. Para colocar um produto numa categoria, use “Editar” no produto.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCategories((v) => !v)}
+                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-neutral-500"
+              >
+                {showCategories ? "Fechar" : "Criar / editar categorias"}
+              </button>
+            </div>
+
+            {categories.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {[{ id: null as string | null, name: "Todos", count: products.length }, ...categories.map((c) => ({
+                  id: c.id as string | null,
+                  name: c.name,
+                  count: products.filter((p) => c.product_ids.includes(p.id)).length,
+                }))].map((c) => (
+                  <button
+                    key={c.id ?? "all"}
+                    onClick={() => setCategoryFilter(c.id)}
+                    aria-pressed={categoryFilter === c.id}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      categoryFilter === c.id
+                        ? "border-blue-500 bg-blue-950 text-blue-200"
+                        : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                    }`}
+                  >
+                    {c.name} <span className="opacity-60">{c.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {showCategories && (
+              <div className="space-y-3 border-t border-neutral-800 pt-3">
+                <form onSubmit={handleAddCategory} className="flex gap-2">
+                  <input
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    placeholder="Nova categoria (ex.: Chaveiros)"
+                    maxLength={60}
+                    className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSavingCategories || !newCategoryName.trim() || categories.length >= 30}
+                    className="shrink-0 rounded bg-blue-600 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                  >
+                    + Criar
+                  </button>
+                </form>
+                {categories.length === 0 ? (
+                  <p className="text-sm text-neutral-500">Nenhuma categoria ainda.</p>
+                ) : (
+                  <ul className="divide-y divide-neutral-800">
+                    {categories.map((c) => (
+                      <li key={c.id} className="flex flex-wrap items-center gap-2 py-2">
+                        {renamingId === c.id ? (
+                          <>
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              maxLength={60}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleRenameCategory(c.id);
+                                if (e.key === "Escape") setRenamingId(null);
+                              }}
+                              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm"
+                            />
+                            <button
+                              onClick={() => handleRenameCategory(c.id)}
+                              disabled={isSavingCategories || !renameValue.trim()}
+                              className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                            >
+                              Salvar
+                            </button>
+                            <button onClick={() => setRenamingId(null)} className="px-2 text-xs text-neutral-400 hover:underline">
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="min-w-0 flex-1 truncate text-sm">
+                              {c.name}{" "}
+                              <span className="text-xs text-neutral-500">
+                                · {products.filter((p) => c.product_ids.includes(p.id)).length} produto(s)
+                              </span>
+                            </span>
+                            <button
+                              onClick={() => {
+                                setRenamingId(c.id);
+                                setRenameValue(c.name);
+                              }}
+                              className="text-xs text-blue-400 hover:underline"
+                            >
+                              Renomear
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCategory(c)}
+                              disabled={isSavingCategories}
+                              className="text-xs text-red-400 hover:underline disabled:opacity-50"
+                            >
+                              Apagar
+                            </button>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <SearchInput value={search} onChange={setSearch} className="sm:max-w-sm sm:flex-1" />
+          {storeSettings && (
+            <div className="flex gap-1.5">
+              {(
+                [
+                  ["all", "Todos"],
+                  ["visible", "Na loja"],
+                  ["hidden", "Ocultos da loja"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setVisibilityFilter(key)}
+                  aria-pressed={visibilityFilter === key}
+                  className={`rounded-full border px-3 py-1.5 text-xs ${
+                    visibilityFilter === key
+                      ? "border-blue-500 bg-blue-950 text-blue-200"
+                      : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                  }`}
+                >
+                  {label}
+                  {key === "hidden" ? ` ${products.filter((p) => isHidden(p.id)).length}` : ""}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-neutral-500">
+            {visibleProducts.length === products.length
+              ? `${products.length} produto(s) cadastrado(s)`
+              : `${visibleProducts.length} de ${products.length} produto(s)`}
+          </p>
+          <button
+            onClick={() => (showForm ? resetForm() : setShowForm(true))}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500"
+          >
+            {showForm ? "Cancelar" : "+ Novo produto"}
+          </button>
+        </div>
+
+        {showForm && (
+          <form
+            ref={formRef}
+            onSubmit={handleSubmit}
+            className="scroll-mt-24 space-y-4 rounded-xl border border-neutral-800 bg-neutral-950/50 p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="truncate font-medium">
+                {editingId
+                  ? `Editando: ${products.find((p) => p.id === editingId)?.name ?? "produto"}`
+                  : "Novo produto"}
+                {draftRestored && (
+                  <span className="ml-2 text-xs font-normal text-yellow-400">· rascunho recuperado</span>
+                )}
+                {staleDraftNotice && !editingId && (
+                  <span className="ml-2 text-xs font-normal text-yellow-400">
+                    · o produto que estava sendo editado foi apagado; salvar cria um novo
+                  </span>
+                )}
+              </h2>
+              <button type="button" onClick={resetForm} className="shrink-0 text-sm text-neutral-400 hover:underline">
+                Cancelar
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("completo")}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                  mode === "completo"
+                    ? "border-blue-500 bg-blue-950 text-blue-200"
+                    : "border-neutral-700 text-neutral-400 hover:border-neutral-600"
+                }`}
+              >
+                Completo (produção)
+              </button>
+              <button
+                type="button"
+                onClick={() => switchToManualPrice()}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                  mode === "simples"
+                    ? "border-blue-500 bg-blue-950 text-blue-200"
+                    : "border-neutral-700 text-neutral-400 hover:border-neutral-600"
+                }`}
+              >
+                Simples (manual)
+              </button>
+            </div>
+            {mode === "simples" ? (
+              <p className="text-xs text-neutral-500">
+                Só nome e preço — sem forno, material ou perfil de custo.
+              </p>
+            ) : !bomLines.some((l) => l.material_id && Number(l.quantity_g) > 0) &&
+              !(Number(printTimeHours) > 0) ? (
+              <p className="text-xs text-yellow-400">
+                Sem materiais nem tempo de forno, o produto fica <strong>sem preço</strong>.{" "}
+                <button type="button" onClick={() => switchToManualPrice()} className="text-blue-400 hover:underline">
+                  Digitar o preço (Simples)
+                </button>
+              </p>
+            ) : (
+              editingId &&
+              costs[editingId] && (
+                <p className="text-xs text-neutral-400">
+                  Preço calculado hoje:{" "}
+                  <span className="font-medium text-green-400">{formatCurrency(costs[editingId]!.suggested_price)}</span>{" "}
+                  (custo {formatCurrency(costs[editingId]!.production_cost)}).{" "}
+                  <button type="button" onClick={() => switchToManualPrice()} className="text-blue-400 hover:underline">
+                    Prefiro digitar o preço
+                  </button>
+                </p>
+              )
+            )}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <input required placeholder="Nome do produto" value={name} onChange={(e) => setName(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2" />
+              <input placeholder="Descrição (opcional)" value={description} onChange={(e) => setDescription(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2" />
+              {mode === "simples" ? (
+                <>
+                  <input required type="number" step="0.01" min="0" placeholder="Preço de venda (R$)" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                  <input placeholder="Tamanho (opcional, ex: 10x5x3cm)" value={size} onChange={(e) => setSize(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                </>
+              ) : (
+                <>
+                  <input type="number" step="0.01" placeholder="Horas de forno por peça" value={printTimeHours} onChange={(e) => setPrintTimeHours(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                  <select value={machineId} onChange={(e) => setMachineId(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2">
+                    <option value="">Forno (opcional)</option>
+                    {machines.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <input placeholder="Tamanho (opcional, ex: 10x5x3cm)" value={size} onChange={(e) => setSize(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2" />
+                </>
+              )}
+              <input
+                type="number"
+                step="1"
+                min="0"
+                placeholder="Quantidade em estoque (opcional, 0 = esgotado)"
+                value={stockQuantity}
+                onChange={(e) => setStockQuantity(e.target.value)}
+                className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2"
+              />
+              <p className="text-xs text-neutral-500 sm:col-span-2">
+                Deixe em branco para não controlar estoque (sempre disponível).
+              </p>
+            </div>
+
+            {storeSettings && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-neutral-800 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={formVisible}
+                  onChange={(e) => setFormVisible(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-blue-600"
+                />
+                <span>
+                  <span className="block text-sm">Mostrar na loja pública</span>
+                  <span className="block text-xs text-neutral-500">
+                    Desmarque para o produto continuar aqui no sistema, mas não aparecer para os clientes.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {storeSettings && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-neutral-800 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={formPriceOnRequest}
+                  onChange={(e) => setFormPriceOnRequest(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-blue-600"
+                />
+                <span>
+                  <span className="block text-sm">Preço a consultar na loja</span>
+                  <span className="block text-xs text-neutral-500">
+                    O cliente vê “Preço a consultar” em vez do valor e combina pelo WhatsApp.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {storeSettings && (
+              <label className="block space-y-1">
+                <span className="block text-xs text-neutral-500">
+                  Desconto na loja (% OFF) — o cliente vê o preço riscado e o novo valor. Vazio ou 0 = sem desconto.
+                  Se houver promoção geral (ex.: Black Friday), vale o maior dos dois.
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={90}
+                  step="1"
+                  inputMode="decimal"
+                  value={formDiscount}
+                  onChange={(e) => setFormDiscount(e.target.value)}
+                  placeholder="Ex.: 15"
+                  className="w-32 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm placeholder:text-neutral-600"
+                />
+              </label>
+            )}
+
+            {storeSettings && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-neutral-800 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={formPromoExcluded}
+                  onChange={(e) => setFormPromoExcluded(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-blue-600"
+                />
+                <span>
+                  <span className="block text-sm">Fora das promoções</span>
+                  <span className="block text-xs text-neutral-500">
+                    Este produto não recebe a promoção geral (ex.: Black Friday 10%) nem o desconto por valor do
+                    pedido (ex.: 20% a partir de R$ 500), e não conta para chegar a esse valor. O desconto próprio
+                    acima, se houver, continua valendo.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {storeSettings && (
+              <label className="block space-y-1">
+                <span className="block text-xs text-neutral-500">
+                  Modelo 3D (opcional) — link https de um arquivo .glb. Na loja aparece o botão “Ver em 3D”, com
+                  giro e zoom (e realidade aumentada no celular).
+                </span>
+                <input
+                  type="url"
+                  inputMode="url"
+                  value={formModelUrl}
+                  onChange={(e) => setFormModelUrl(e.target.value)}
+                  placeholder="https://…/modelo.glb"
+                  className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm placeholder:text-neutral-600"
+                />
+              </label>
+            )}
+
+            {storeSettings && (
+              <div className="space-y-1.5">
+                <label className="block text-xs text-neutral-500">Categorias (pode marcar mais de uma)</label>
+                {categories.length === 0 ? (
+                  <p className="text-xs text-neutral-600">
+                    Nenhuma categoria criada — use “Criar / editar categorias” acima.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {categories.map((c) => {
+                      const on = formCategoryIds.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleFormCategory(c.id)}
+                          aria-pressed={on}
+                          className={`rounded-full border px-3 py-1 text-xs ${
+                            on
+                              ? "border-blue-500 bg-blue-950 text-blue-200"
+                              : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                          }`}
+                        >
+                          {on ? "✓ " : ""}
+                          {c.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="block text-xs text-neutral-500">Fotos do produto (opcional, pode selecionar várias)</label>
+              <input type="file" accept="image/*" multiple onChange={handlePhotoChange} className="block w-full text-sm" />
+              {isUploadingPhoto && <p className="text-xs text-neutral-500">Enviando foto…</p>}
+              {photoUrls.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {photoUrls.map((url, i) => (
+                    <div key={url} className="relative">
+                      <img
+                        src={url}
+                        alt=""
+                        className={`h-20 w-20 rounded object-cover ${i === 0 ? "ring-2 ring-blue-500" : ""}`}
+                      />
+                      {i === 0 ? (
+                        <span className="absolute bottom-0 left-0 right-0 rounded-b bg-blue-600/90 py-0.5 text-center text-[10px] text-white">
+                          Capa
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setCoverPhoto(url)}
+                          className="absolute bottom-0 left-0 right-0 rounded-b bg-black/70 py-0.5 text-center text-[10px] text-neutral-200 hover:bg-black/90"
+                        >
+                          Definir capa
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(url)}
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs leading-none text-white hover:bg-red-500"
+                        aria-label="Remover foto"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {mode === "completo" && (
+              <div className="space-y-2">
+                <p className="text-xs text-neutral-500">
+                  Quanto material esse produto consome por unidade
+                </p>
+                {bomLines.map((line, index) => (
+                  <div key={index} className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      value={line.material_id}
+                      onChange={(e) => updateBomLine(index, { material_id: e.target.value })}
+                      className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:flex-1"
+                    >
+                      <option value="">Selecione o material…</option>
+                      {materials.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Gramas"
+                        value={line.quantity_g}
+                        onChange={(e) => updateBomLine(index, { quantity_g: e.target.value })}
+                        className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:w-28"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeBomLine(index)}
+                        disabled={bomLines.length === 1}
+                        className="shrink-0 rounded border border-neutral-700 px-3 py-2 text-sm text-neutral-400 hover:border-red-700 hover:text-red-400 disabled:opacity-30"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addBomLine}
+                  className="text-sm text-blue-400 hover:underline"
+                >
+                  + Adicionar material
+                </button>
+              </div>
+            )}
+
+            <button type="submit" disabled={isSaving || isUploadingPhoto} className="w-full rounded bg-blue-600 px-4 py-2 font-medium disabled:opacity-50">
+              {isSaving ? "Salvando…" : editingId ? "Salvar alterações" : "Salvar produto"}
+            </button>
+          </form>
+        )}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {isLoading ? (
+            <p className="text-neutral-500">Carregando…</p>
+          ) : products.length === 0 ? (
+            <p className="text-neutral-500">Nenhum produto cadastrado ainda.</p>
+          ) : visibleProducts.length === 0 ? (
+            <p className="text-neutral-500">Nenhum produto encontrado.</p>
+          ) : (
+            visibleProducts.map((product) => {
+              const cost = costs[product.id];
+              const isManual = product.manual_price != null;
+              return (
+                <div
+                  key={product.id}
+                  className={`space-y-2 rounded-xl border bg-neutral-950/50 p-4 ${
+                    isHidden(product.id) ? "border-dashed border-neutral-700 opacity-70" : "border-neutral-800"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 gap-3">
+                      {product.photo_urls.length > 0 && (
+                        <div className="relative shrink-0">
+                          <img
+                            src={imgSrc(product.photo_urls[0], IMG_WIDTH.thumb)}
+                            alt=""
+                            className="h-14 w-14 rounded object-cover"
+                            style={focusStyle(product.photo_focus, product.photo_urls[0])}
+                          />
+                          {product.photo_urls.length > 1 && (
+                            <span className="absolute -right-1 -top-1 rounded-full bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
+                              +{product.photo_urls.length - 1}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="truncate font-medium">{product.name}</h3>
+                        {product.description && (
+                          <p className="truncate text-xs text-neutral-500">{product.description}</p>
+                        )}
+                        {product.size && (
+                          <p className="text-xs text-neutral-500">{product.size}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {product.print_time_hours != null && (
+                        <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400">
+                          {product.print_time_hours}h
+                        </span>
+                      )}
+                      {product.stock_quantity != null && (
+                        <span
+                          className={`rounded px-2 py-0.5 text-xs ${
+                            product.stock_quantity === 0
+                              ? "bg-red-950 text-red-300"
+                              : "bg-neutral-800 text-neutral-400"
+                          }`}
+                        >
+                          {product.stock_quantity === 0 ? "Esgotado" : `${product.stock_quantity} em estoque`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {storeSettings && isHidden(product.id) && (
+                    <p className="text-xs text-neutral-400">Oculto da loja pública</p>
+                  )}
+
+                  {storeSettings?.price_on_request_product_ids?.includes(product.id) && (
+                    <p className="text-xs text-purple-300">Na loja: preço a consultar</p>
+                  )}
+
+                  {categories.some((c) => c.product_ids.includes(product.id)) && (
+                    <div className="flex flex-wrap gap-1">
+                      {categories
+                        .filter((c) => c.product_ids.includes(product.id))
+                        .map((c) => (
+                          <span key={c.id} className="rounded-full bg-blue-950/60 px-2 py-0.5 text-[11px] text-blue-300">
+                            {c.name}
+                          </span>
+                        ))}
+                    </div>
+                  )}
+
+                  {product.materials.length > 0 && (
+                    <ul className="text-xs text-neutral-400">
+                      {product.materials.map((line, i) => (
+                        <li key={i}>
+                          {materialName(line.material_id)} — {line.quantity_g}g
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {isManual ? (
+                    <div className="flex items-center justify-between border-t border-neutral-800 pt-2 text-sm">
+                      <span className="text-neutral-500">Preço manual</span>
+                      <span className="font-medium text-green-400">{formatCurrency(product.manual_price)}</span>
+                    </div>
+                  ) : cost ? (
+                    <div className="space-y-2 border-t border-neutral-800 pt-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-neutral-400">Custo: {formatCurrency(cost.production_cost)}</span>
+                        <span className="font-medium text-green-400">
+                          {cost.source === "pricing" ? "Venda (da Precificação)" : "Venda (calculada)"}:{" "}
+                          {formatCurrency(cost.suggested_price)}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setCalcOpenId(calcOpenId === product.id ? null : product.id)}
+                        className="text-xs text-neutral-400 underline hover:text-neutral-200"
+                      >
+                        {calcOpenId === product.id ? "Fechar cálculo" : "Ver cálculo"}
+                      </button>
+                      {calcOpenId === product.id &&
+                        (() => {
+                          const piece = pieceByName.get(normalizeSearch(product.name));
+                          const snap = (piece?.cost_breakdown_snapshot ?? null) as Partial<ProductCost> | null;
+                          const profile = costProfiles.find((cp) => cp.is_default) ?? costProfiles[0];
+                          const machine = machines.find((m) => m.id === product.machine_id);
+                          const col = (v: unknown) => (v == null ? "—" : formatCurrency(Number(v)));
+                          const productMargin = marginOf(cost);
+                          const pieceMargin = snap ? marginOf(snap) : null;
+                          return (
+                            <div className="space-y-2 rounded border border-neutral-800 bg-neutral-950/70 p-2 text-xs">
+                              <table className="w-full">
+                                <thead>
+                                  <tr className="text-neutral-500">
+                                    <th className="py-1 text-left font-normal"></th>
+                                    <th className="py-1 text-right font-normal">Este produto</th>
+                                    {snap && <th className="py-1 text-right font-normal">Precificação</th>}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {CALC_ROWS.map(({ key, label }) => {
+                                    const differs = snap && Math.abs(Number(cost[key] ?? 0) - Number(snap[key] ?? 0)) >= 0.01;
+                                    return (
+                                      <tr key={key} className={key === "production_cost" ? "border-t border-neutral-800 font-medium" : ""}>
+                                        <td className="py-0.5 text-neutral-400">{label}</td>
+                                        <td className={`py-0.5 text-right ${differs ? "text-yellow-300" : ""}`}>{col(cost[key])}</td>
+                                        {snap && <td className="py-0.5 text-right">{col(snap[key])}</td>}
+                                      </tr>
+                                    );
+                                  })}
+                                  <tr>
+                                    <td className="py-0.5 text-neutral-400">+ Margem de lucro</td>
+                                    <td className="py-0.5 text-right">{productMargin == null ? "—" : `${productMargin.toFixed(0)}%`}</td>
+                                    {snap && <td className="py-0.5 text-right">{pieceMargin == null ? "—" : `${pieceMargin.toFixed(0)}%`}</td>}
+                                  </tr>
+                                  <tr>
+                                    <td className="py-0.5 text-neutral-400">+ Imposto</td>
+                                    <td className="py-0.5 text-right">{col(cost.tax_amount)}</td>
+                                    {snap && <td className="py-0.5 text-right">{col(snap.tax_amount)}</td>}
+                                  </tr>
+                                  <tr className="border-t border-neutral-800 font-semibold">
+                                    <td className="py-1 text-neutral-300">= Preço</td>
+                                    <td className="py-1 text-right text-green-400">{formatCurrency(cost.suggested_price)}</td>
+                                    {snap && (
+                                      <td className="py-1 text-right text-green-400">
+                                        {formatCurrency(piece!.final_price ?? piece!.suggested_price)}
+                                      </td>
+                                    )}
+                                  </tr>
+                                </tbody>
+                              </table>
+                              <ul className="space-y-0.5 text-neutral-500">
+                                {cost.source === "pricing" ? (
+                                  <li className="text-green-300/80">
+                                    Este produto usa o preço da peça de mesmo nome salva na Precificação — com energia,
+                                    itens adicionais, mão de obra, depreciação e a margem da peça. Editou a peça? O preço
+                                    aqui acompanha.
+                                  </li>
+                                ) : (
+                                <li>
+                                  <span className="text-neutral-400">Este produto usa:</span>{" "}
+                                  {product.materials.length > 0
+                                    ? product.materials
+                                        .map((line) => {
+                                          const mat = materials.find((m) => m.id === line.material_id);
+                                          return `${line.quantity_g} g de ${mat?.name ?? "material"} a ${formatCurrency(mat?.cost_per_kg ?? 0)}/kg (cadastro em Materiais)`;
+                                        })
+                                        .join("; ")
+                                    : "nenhum material"}
+                                  {" · "}
+                                  {product.print_time_hours
+                                    ? `${product.print_time_hours} h de forno${machine ? ` no ${machine.name} a ${formatCurrency(machine.cost_per_hour ?? 0)}/h (cadastro em Fornos)` : " sem forno"}`
+                                    : "sem tempo de forno"}
+                                  {" · "}luz pela potência do forno{machine?.power_watts ? ` (${machine.power_watts} W)` : " (sem potência cadastrada = R$ 0)"} · sem mão de obra nem itens extras
+                                  {profile ? ` · margem do perfil “${profile.name}”: ${profile.profit_margin_percentage}%` : ""}
+                                </li>
+                                )}
+                                {piece && (
+                                  <li>
+                                    <span className="text-neutral-400">A Precificação usou:</span>{" "}
+                                    {piece.weight_g != null ? `${piece.weight_g} g` : "—"}
+                                    {piece.cost_per_kg != null ? ` a ${formatCurrency(piece.cost_per_kg)}/kg` : ""}
+                                    {(piece.extra_items ?? []).length > 0
+                                      ? ` + extras (${(piece.extra_items ?? []).map((x) => `${x.name} ${formatCurrency(x.cost)}`).join(", ")})`
+                                      : ""}
+                                    {piece.print_time_hours != null ? ` · ${piece.print_time_hours} h` : ""}
+                                    {piece.depreciation_value != null
+                                      ? ` · depreciação ${formatCurrency(piece.depreciation_value)} ${piece.depreciation_mode === "peca" ? "por peça" : "por hora"}`
+                                      : ""}
+                                    {piece.labor_hours ? ` · ${piece.labor_hours} h de mão de obra` : ""}
+                                    {piece.profit_margin_percentage != null ? ` · margem ${piece.profit_margin_percentage}%` : ""}
+                                    {piece.final_price != null ? " · preço final digitado por você" : ""}
+                                  </li>
+                                )}
+                                <li>
+                                  Em amarelo: o que difere da Precificação. Para usar o preço dela, clique em “Definir preço”
+                                  ou na Conferência de preços.
+                                </li>
+                              </ul>
+                            </div>
+                          );
+                        })()}
+                    </div>
+                  ) : (
+                    <p className="border-t border-neutral-800 pt-2 text-xs text-neutral-500">
+                      {costProfiles.length === 0
+                        ? "Cadastre um perfil de custo para ver o preço sugerido."
+                        : "Sem preço definido — use “Definir preço” (na loja aparece como “Preço a consultar”)."}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-neutral-800 pt-2">
+                    <button onClick={() => startEdit(product)} className="text-xs text-blue-400 hover:underline">
+                      Editar
+                    </button>
+                    {!isManual && (
+                      <button
+                        onClick={() => startEditWithManualPrice(product)}
+                        className="text-xs text-green-400 hover:underline"
+                      >
+                        Definir preço
+                      </button>
+                    )}
+                    {storeSettings && (
+                      <button
+                        onClick={() => toggleVisibility(product)}
+                        disabled={isSavingCategories}
+                        className="text-xs text-neutral-300 hover:underline disabled:opacity-50"
+                      >
+                        {isHidden(product.id) ? "Mostrar na loja" : "Ocultar da loja"}
+                      </button>
+                    )}
+                    <button onClick={() => handleDelete(product)} className="text-xs text-red-400 hover:underline">
+                      Excluir
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </AppShell>
+  );
+}

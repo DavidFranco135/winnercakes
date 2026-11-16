@@ -1,0 +1,102 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+import { ApiError } from "@/lib/api-client";
+
+export default function LoginPage() {
+  const { login, status } = useAuth();
+  const router = useRouter();
+
+  // Quem já está conectado vai direto para o painel.
+  useEffect(() => {
+    if (status === "authenticated") router.replace("/dashboard");
+  }, [status, router]);
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await login(email, password, rememberMe);
+      router.replace("/dashboard");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao entrar.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center p-6">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
+        <div className="flex flex-col items-center gap-2 pb-2 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/winner-mark.png" alt="Winner Cakes" className="h-20 w-20 rounded-2xl" />
+          <p className="text-sm font-semibold tracking-wide text-neutral-300">Winner Cakes</p>
+        </div>
+        <h1 className="text-2xl font-semibold">Entrar</h1>
+        {error && <p className="rounded bg-red-950 p-2 text-sm text-red-300">{error}</p>}
+        <div className="space-y-1">
+          <label className="block text-sm text-neutral-400" htmlFor="email">
+            E-mail
+          </label>
+          <input
+            id="email"
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-sm text-neutral-400" htmlFor="password">
+            Senha
+          </label>
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded border border-neutral-700 bg-neutral-900 py-2 pl-3 pr-20"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 px-3 text-xs text-neutral-400 hover:text-neutral-200"
+            >
+              {showPassword ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-neutral-300">
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+            className="h-4 w-4"
+          />
+          Manter conectado neste aparelho
+        </label>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded bg-blue-600 px-3 py-2 font-medium disabled:opacity-50"
+        >
+          {isSubmitting ? "Entrando…" : "Entrar"}
+        </button>
+      </form>
+    </main>
+  );
+}

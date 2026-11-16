@@ -1,0 +1,297 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+import { apiFetch, ApiError } from "@/lib/api-client";
+import { formatCurrency, formatDate } from "@/lib/format";
+import { FINANCE_TRANSACTION_TYPES } from "@/lib/types";
+import type { FinancialSummary, FinancialTransaction } from "@/lib/types";
+import { AppShell } from "@/components/AppShell";
+
+const TYPE_LABELS: Record<string, string> = {
+  receita: "Receita",
+  custo: "Custo",
+  despesa: "Despesa",
+};
+
+const TYPE_TONE: Record<string, string> = {
+  receita: "text-green-400",
+  custo: "text-yellow-300",
+  despesa: "text-red-400",
+};
+
+export default function FinanceiroPage() {
+  const { status, accessToken, currentOrganizationId } = useAuth();
+  const router = useRouter();
+  const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
+  const [summary, setSummary] = useState<FinancialSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState("");
+  const [pendingFilter, setPendingFilter] = useState<"" | "receber" | "pagar">("");
+  // Filtros iniciais vindos do link (ex.: cartões do Painel). Lidos depois de
+  // montar: ao navegar dentro do app, a URL nova só existe nesse ponto.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const tipo = params.get("tipo");
+      if (tipo) setTypeFilter(tipo);
+      const pendentes = params.get("pendentes");
+      if (pendentes === "receber" || pendentes === "pagar") setPendingFilter(pendentes);
+      if (tipo || pendentes) window.history.replaceState(window.history.state, "", window.location.pathname);
+    }, 0);
+    return () => clearTimeout(id);
+  }, []);
+
+  const [type, setType] = useState("receita");
+  const [category, setCategory] = useState("");
+  const [amount, setAmount] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [markPaid, setMarkPaid] = useState(false);
+
+  const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
+
+  const load = useCallback(async () => {
+    if (!accessToken || !currentOrganizationId) return;
+    setIsLoading(true);
+    try {
+      const query = typeFilter ? `?type=${typeFilter}` : "";
+      const [transactionsData, summaryData] = await Promise.all([
+        apiFetch<FinancialTransaction[]>(`${orgPath}/finance/transactions${query}`, { accessToken }),
+        apiFetch<FinancialSummary>(`${orgPath}/finance/summary`, { accessToken }),
+      ]);
+      setTransactions(transactionsData);
+      setSummary(summaryData);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao carregar financeiro.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [accessToken, currentOrganizationId, orgPath, typeFilter]);
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/login");
+      return;
+    }
+    if (status !== "authenticated") return;
+    const timeoutId = setTimeout(load, 0);
+    return () => clearTimeout(timeoutId);
+  }, [status, router, load]);
+
+  const listedTransactions = transactions.filter((t) => {
+    if (pendingFilter === "receber") return !t.paid_at && t.type === "receita";
+    if (pendingFilter === "pagar") return !t.paid_at && t.type !== "receita";
+    return true;
+  });
+
+  function resetForm() {
+    setType("receita");
+    setCategory("");
+    setAmount("");
+    setDueDate("");
+    setMarkPaid(false);
+    setEditingId(null);
+    setShowForm(false);
+  }
+
+  function startEdit(t: FinancialTransaction) {
+    setEditingId(t.id);
+    setType(t.type);
+    setCategory(t.category);
+    setAmount(String(t.amount));
+    setDueDate(t.due_date ?? "");
+    setShowForm(true);
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!accessToken) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      if (editingId) {
+        await apiFetch(`${orgPath}/finance/transactions/${editingId}`, {
+          method: "PATCH",
+          accessToken,
+          body: JSON.stringify({
+            category,
+            amount: Number(amount),
+            due_date: dueDate || null,
+          }),
+        });
+      } else {
+        await apiFetch(`${orgPath}/finance/transactions`, {
+          method: "POST",
+          accessToken,
+          body: JSON.stringify({
+            type,
+            category,
+            amount: Number(amount),
+            due_date: dueDate || null,
+            mark_as_paid: markPaid,
+          }),
+        });
+      }
+      resetForm();
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar lançamento.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDelete(t: FinancialTransaction) {
+    if (!accessToken) return;
+    if (!window.confirm(`Excluir o lançamento "${t.category}"?`)) return;
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/finance/transactions/${t.id}`, { method: "DELETE", accessToken });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao excluir lançamento.");
+    }
+  }
+
+  async function handleMarkPaid(transactionId: string) {
+    if (!accessToken) return;
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/finance/transactions/${transactionId}/mark-paid`, {
+        method: "POST",
+        accessToken,
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao marcar como pago.");
+    }
+  }
+
+  if (status !== "authenticated") {
+    return (
+      <main className="flex min-h-screen items-center justify-center">
+        <p className="text-neutral-400">Carregando…</p>
+      </main>
+    );
+  }
+
+  return (
+    <AppShell title="Financeiro">
+      <div className="mx-auto max-w-5xl space-y-6">
+        {error && <p className="rounded bg-red-950 p-2 text-sm text-red-300">{error}</p>}
+
+        {summary && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              { label: "Receita", value: summary.total_revenue, tone: "text-green-400" },
+              { label: "Custo", value: summary.total_cost, tone: "text-neutral-100" },
+              { label: "Despesa", value: summary.total_expense, tone: "text-red-400" },
+              { label: "Lucro", value: summary.profit, tone: summary.profit >= 0 ? "text-green-400" : "text-red-400" },
+              { label: "A receber", value: summary.pending_receivables, tone: "text-yellow-300" },
+              { label: "A pagar", value: summary.pending_payables, tone: "text-yellow-300" },
+            ].map((kpi) => (
+              <div key={kpi.label} className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
+                <p className="text-xs text-neutral-500">{kpi.label}</p>
+                <p className={`mt-1 text-lg font-semibold ${kpi.tone}`}>{formatCurrency(kpi.value)}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
+              <option value="">Todos os tipos</option>
+              {FINANCE_TRANSACTION_TYPES.map((t) => (
+                <option key={t} value={t}>{TYPE_LABELS[t]}</option>
+              ))}
+            </select>
+            <select
+              value={pendingFilter}
+              onChange={(e) => setPendingFilter(e.target.value as typeof pendingFilter)}
+              className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+            >
+              <option value="">Pagos e pendentes</option>
+              <option value="receber">Só a receber (receitas pendentes)</option>
+              <option value="pagar">Só a pagar (custos e despesas pendentes)</option>
+            </select>
+          </div>
+          <button
+            onClick={() => (showForm ? resetForm() : setShowForm(true))}
+            className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500"
+          >
+            {showForm ? "Cancelar" : "+ Novo lançamento"}
+          </button>
+        </div>
+
+        {showForm && (
+          <form
+            onSubmit={handleSubmit}
+            className="grid grid-cols-1 gap-3 rounded-xl border border-neutral-800 bg-neutral-950/50 p-4 sm:grid-cols-2"
+          >
+            <select value={type} onChange={(e) => setType(e.target.value)} disabled={!!editingId} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 disabled:opacity-50">
+              {FINANCE_TRANSACTION_TYPES.map((t) => (
+                <option key={t} value={t}>{TYPE_LABELS[t]}</option>
+              ))}
+            </select>
+            <input required placeholder="Categoria" value={category} onChange={(e) => setCategory(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+            <input required type="number" step="0.01" placeholder="Valor (R$)" value={amount} onChange={(e) => setAmount(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+            <input type="date" placeholder="Vencimento" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+            {!editingId && (
+              <label className="flex items-center gap-2 text-sm text-neutral-400 sm:col-span-2">
+                <input type="checkbox" checked={markPaid} onChange={(e) => setMarkPaid(e.target.checked)} className="rounded border-neutral-700" />
+                Já foi pago
+              </label>
+            )}
+            <button type="submit" disabled={isSaving} className="rounded bg-blue-600 px-4 py-2 font-medium disabled:opacity-50 sm:col-span-2">
+              {isSaving ? "Salvando…" : editingId ? "Salvar alterações" : "Salvar lançamento"}
+            </button>
+          </form>
+        )}
+
+        <div className="rounded-xl border border-neutral-800 divide-y divide-neutral-800">
+          {isLoading ? (
+            <p className="px-4 py-6 text-center text-sm text-neutral-500">Carregando…</p>
+          ) : listedTransactions.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-neutral-500">Nenhum lançamento.</p>
+          ) : (
+            listedTransactions.map((t) => (
+              <div key={t.id} className="flex flex-wrap items-start justify-between gap-2 p-4">
+                <div className="min-w-0 space-y-1">
+                  <p className={`font-medium ${TYPE_TONE[t.type] ?? ""}`}>{TYPE_LABELS[t.type] ?? t.type}</p>
+                  <p className="truncate text-sm text-neutral-300">{t.category}</p>
+                  <p className="text-sm text-neutral-400">
+                    {formatCurrency(t.amount)} · vence {formatDate(t.due_date)}
+                  </p>
+                  {t.paid_at ? (
+                    <span className="inline-block rounded bg-green-950 px-2 py-0.5 text-xs text-green-300">Pago</span>
+                  ) : (
+                    <span className="inline-block rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400">Pendente</span>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-3 text-sm">
+                  {!t.paid_at && (
+                    <button onClick={() => handleMarkPaid(t.id)} className="text-blue-400 hover:underline">
+                      Marcar como pago
+                    </button>
+                  )}
+                  <button onClick={() => startEdit(t)} className="text-blue-400 hover:underline">
+                    Editar
+                  </button>
+                  <button onClick={() => handleDelete(t)} className="text-red-400 hover:underline">
+                    Excluir
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </AppShell>
+  );
+}

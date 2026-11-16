@@ -1,0 +1,248 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.orm import Session
+
+from src.application.orders import use_cases as order_use_cases
+from src.domain.auth.roles import Role
+from src.domain.shared.exceptions import DomainError
+from src.infrastructure.db.models import User
+from src.infrastructure.repositories import OrderItemRepository
+from src.interfaces.http.dependencies import get_current_user, get_db, require_org_role
+from src.interfaces.http.errors import as_http_exception
+from src.interfaces.http.v1.schemas import (
+    CreateOrderItemRequest,
+    CreateOrderRequest,
+    OrderItemBrief,
+    OrderItemResponse,
+    OrderResponse,
+    TransitionOrderStatusRequest,
+    UpdateOrderItemRequest,
+    UpdateOrderRequest,
+)
+
+router = APIRouter(prefix="/organizations/{organization_id}/orders", tags=["orders"])
+
+
+@router.post(
+    "",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def create_order(
+    organization_id: UUID,
+    payload: CreateOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    try:
+        order = order_use_cases.create_order(
+            db,
+            organization_id=organization_id,
+            customer_id=payload.customer_id,
+            quote_id=payload.quote_id,
+            notes=payload.notes,
+            created_by=current_user.id,
+            due_date=payload.due_date,
+            status=payload.status,
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return OrderResponse.model_validate(order)
+
+
+@router.get(
+    "",
+    response_model=list[OrderResponse],
+    dependencies=[Depends(require_org_role(Role.VIEWER))],
+)
+def list_orders(organization_id: UUID, db: Session = Depends(get_db)) -> list[OrderResponse]:
+    orders = order_use_cases.list_orders(db, organization_id=organization_id)
+    # Itens de todos os pedidos numa leitura só (uma por pedido deixava a tela lenta).
+    items_by_order = OrderItemRepository(db).list_for_orders(
+        organization_id, [order.id for order in orders]
+    )
+    responses = []
+    for order in orders:
+        response = OrderResponse.model_validate(order)
+        response.items = [
+            OrderItemBrief(product_id=i.product_id, quantity=i.quantity, unit_price=i.unit_price)
+            for i in items_by_order.get(order.id, [])
+        ]
+        responses.append(response)
+    return responses
+
+
+@router.get(
+    "/{order_id}",
+    response_model=OrderResponse,
+    dependencies=[Depends(require_org_role(Role.VIEWER))],
+)
+def get_order(
+    organization_id: UUID, order_id: UUID, db: Session = Depends(get_db)
+) -> OrderResponse:
+    try:
+        order = order_use_cases.get_order(db, organization_id=organization_id, order_id=order_id)
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return OrderResponse.model_validate(order)
+
+
+@router.patch(
+    "/{order_id}",
+    response_model=OrderResponse,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def update_order(
+    organization_id: UUID,
+    order_id: UUID,
+    payload: UpdateOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    try:
+        order = order_use_cases.update_order(
+            db,
+            organization_id=organization_id,
+            order_id=order_id,
+            customer_id=payload.customer_id,
+            notes=payload.notes,
+            due_date=payload.due_date,
+            clear_due_date=payload.clear_due_date,
+            production_status=payload.production_status,
+            status=payload.status,
+            triggered_by=current_user.id,
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return OrderResponse.model_validate(order)
+
+
+@router.delete(
+    "/{order_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def delete_order(organization_id: UUID, order_id: UUID, db: Session = Depends(get_db)) -> None:
+    try:
+        order_use_cases.delete_order(db, organization_id=organization_id, order_id=order_id)
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+
+
+@router.post(
+    "/{order_id}/transition",
+    response_model=OrderResponse,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def transition_order_status(
+    organization_id: UUID,
+    order_id: UUID,
+    payload: TransitionOrderStatusRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    try:
+        order = order_use_cases.transition_order_status(
+            db,
+            organization_id=organization_id,
+            order_id=order_id,
+            new_status=payload.status,
+            triggered_by=current_user.id,
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return OrderResponse.model_validate(order)
+
+
+@router.post(
+    "/{order_id}/items",
+    response_model=OrderItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def add_order_item(
+    organization_id: UUID,
+    order_id: UUID,
+    payload: CreateOrderItemRequest,
+    db: Session = Depends(get_db),
+) -> OrderItemResponse:
+    try:
+        item = order_use_cases.add_order_item(
+            db,
+            organization_id=organization_id,
+            order_id=order_id,
+            project_id=payload.project_id,
+            project_version_id=payload.project_version_id,
+            product_id=payload.product_id,
+            machine_id=payload.machine_id,
+            material_id=payload.material_id,
+            quantity=payload.quantity,
+            unit_cost=payload.unit_cost,
+            unit_price=payload.unit_price,
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return OrderItemResponse.model_validate(item)
+
+
+@router.get(
+    "/{order_id}/items",
+    response_model=list[OrderItemResponse],
+    dependencies=[Depends(require_org_role(Role.VIEWER))],
+)
+def list_order_items(
+    organization_id: UUID, order_id: UUID, db: Session = Depends(get_db)
+) -> list[OrderItemResponse]:
+    try:
+        items = order_use_cases.list_order_items(
+            db, organization_id=organization_id, order_id=order_id
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return [OrderItemResponse.model_validate(i) for i in items]
+
+
+@router.patch(
+    "/{order_id}/items/{item_id}",
+    response_model=OrderItemResponse,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def update_order_item(
+    organization_id: UUID,
+    order_id: UUID,
+    item_id: UUID,
+    payload: UpdateOrderItemRequest,
+    db: Session = Depends(get_db),
+) -> OrderItemResponse:
+    try:
+        item = order_use_cases.update_order_item(
+            db,
+            organization_id=organization_id,
+            order_id=order_id,
+            item_id=item_id,
+            product_id=payload.product_id,
+            quantity=payload.quantity,
+            unit_cost=payload.unit_cost,
+            unit_price=payload.unit_price,
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return OrderItemResponse.model_validate(item)
+
+
+@router.delete(
+    "/{order_id}/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+)
+def delete_order_item(
+    organization_id: UUID, order_id: UUID, item_id: UUID, db: Session = Depends(get_db)
+) -> None:
+    try:
+        order_use_cases.delete_order_item(
+            db, organization_id=organization_id, order_id=order_id, item_id=item_id
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc

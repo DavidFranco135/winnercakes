@@ -1,0 +1,1366 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+import { apiFetch, ApiError } from "@/lib/api-client";
+import { formatCurrency, formatDate } from "@/lib/format";
+import { ORDER_STATUSES } from "@/lib/types";
+import type {
+  CostProfile,
+  Customer,
+  Order,
+  OrderItem,
+  OrderItemBrief,
+  OrderStatus,
+  Product,
+  ProductCost,
+  ProductionStatus,
+} from "@/lib/types";
+import { focusStyle } from "@/lib/focus";
+import { AppShell } from "@/components/AppShell";
+import { clearDraft, readDraft, writeDraft } from "@/lib/drafts";
+import { ProductPicker } from "@/components/ProductPicker";
+import { STATUS_LABELS, STATUS_TONE } from "@/lib/order-status";
+import { OrderPdfDialog } from "@/components/OrderPdfDialog";
+
+function nextStatus(current: string): string | null {
+  const idx = ORDER_STATUSES.indexOf(current as (typeof ORDER_STATUSES)[number]);
+  if (idx < 0 || idx >= ORDER_STATUSES.length - 2) return null;
+  return ORDER_STATUSES[idx + 1];
+}
+
+const PROGRESS_STEPS = ORDER_STATUSES.filter((s) => s !== "cancelled");
+
+function addressText(address: Customer["address"]): string | null {
+  if (!address) return null;
+  const parts = Object.values(address).filter((v) => typeof v === "string" && v.trim() !== "");
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</p>
+      <p className="break-words text-sm text-neutral-200">{value}</p>
+    </div>
+  );
+}
+
+function OrderSummary({
+  order,
+  customer,
+  items,
+}: {
+  order: Order;
+  customer: Customer | null;
+  items: OrderItem[] | undefined;
+}) {
+  const stepIndex = PROGRESS_STEPS.indexOf(order.status as (typeof PROGRESS_STEPS)[number]);
+  const cancelled = order.status === "cancelled";
+  const totalCost = (items ?? []).reduce((sum, i) => sum + (i.unit_cost ?? 0) * i.quantity, 0);
+  const totalRevenue = (items ?? []).reduce((sum, i) => sum + (i.unit_price ?? 0) * i.quantity, 0);
+  const profit = totalRevenue - totalCost;
+  const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : null;
+  const quantityTotal = (items ?? []).reduce((sum, i) => sum + i.quantity, 0);
+  const address = customer ? addressText(customer.address) : null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1">
+        {cancelled ? (
+          <span className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-300">Cancelado</span>
+        ) : (
+          PROGRESS_STEPS.map((step, i) => (
+            <span
+              key={step}
+              className={`rounded px-2 py-0.5 text-[11px] ${
+                i === stepIndex
+                  ? "bg-blue-600 text-white"
+                  : i < stepIndex
+                    ? "bg-neutral-800 text-neutral-300"
+                    : "bg-neutral-900 text-neutral-600"
+              }`}
+            >
+              {STATUS_LABELS[step]}
+            </span>
+          ))
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <InfoRow label="Cliente" value={customer?.name ?? "—"} />
+        <InfoRow label="Telefone" value={customer?.phone || "—"} />
+        <InfoRow label="E-mail" value={customer?.email || "—"} />
+        <InfoRow label="Documento" value={customer?.document || "—"} />
+        {address && (
+          <div className="sm:col-span-2">
+            <InfoRow label="Endereço" value={address} />
+          </div>
+        )}
+        <InfoRow label="Criado em" value={formatDate(order.created_at)} />
+        <InfoRow label="Pedido" value={`#${order.id.slice(0, 8)}`} />
+        <div className="sm:col-span-2">
+          <InfoRow label="Observações" value={order.notes || "—"} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 rounded border border-neutral-800 bg-neutral-900/50 p-3 sm:grid-cols-4">
+        <InfoRow label="Itens" value={items ? `${items.length} (${quantityTotal} un.)` : "…"} />
+        <InfoRow label="Custo total" value={items ? formatCurrency(totalCost) : "…"} />
+        <InfoRow label="Valor do pedido" value={formatCurrency(order.total_amount)} />
+        <InfoRow
+          label="Lucro estimado"
+          value={
+            items ? (
+              <span className={profit >= 0 ? "text-green-400" : "text-red-400"}>
+                {formatCurrency(profit)}
+                {margin != null ? ` (${margin.toFixed(0)}%)` : ""}
+              </span>
+            ) : (
+              "…"
+            )
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+type ProdKey = "todo" | "doing" | "done" | "late";
+
+const PROD_LABELS: Record<ProdKey, string> = {
+  todo: "A fazer",
+  doing: "Em andamento",
+  late: "Atrasado",
+  done: "Concluído",
+};
+
+const PROD_TONE: Record<ProdKey, string> = {
+  todo: "bg-neutral-800 text-neutral-200",
+  doing: "bg-sky-950 text-sky-300",
+  late: "bg-red-950 text-red-300",
+  done: "bg-green-950 text-green-300",
+};
+
+const PROD_ACTIVE: Record<ProdKey, string> = {
+  todo: "border-neutral-500 bg-neutral-800 text-white",
+  doing: "border-sky-600 bg-sky-950 text-sky-200",
+  late: "border-red-600 bg-red-950 text-red-200",
+  done: "border-green-600 bg-green-950 text-green-200",
+};
+
+const DAY_MS = 86_400_000;
+
+function localDay(iso: string): Date {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatDay(iso: string | null): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function toInputDate(date: Date): string {
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${mm}-${dd}`;
+}
+
+function addDuration(amount: number, unit: "days" | "weeks" | "months"): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  if (unit === "months") date.setMonth(date.getMonth() + amount);
+  else date.setDate(date.getDate() + amount * (unit === "weeks" ? 7 : 1));
+  return toInputDate(date);
+}
+
+function daysUntilDue(order: Order): number | null {
+  if (!order.due_date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((localDay(order.due_date).getTime() - today.getTime()) / DAY_MS);
+}
+
+function effectiveProduction(order: Order): ProdKey {
+  if (order.production_status === "done") return "done";
+  const left = daysUntilDue(order);
+  if (order.status !== "cancelled" && left !== null && left < 0) return "late";
+  return order.production_status;
+}
+
+function dueLabel(order: Order): string | null {
+  const left = daysUntilDue(order);
+  if (left === null || order.production_status === "done") return null;
+  if (left === 0) return "vence hoje";
+  if (left > 0) return `faltam ${left} ${left === 1 ? "dia" : "dias"}`;
+  return `atrasado há ${-left} ${left === -1 ? "dia" : "dias"}`;
+}
+
+function OrderItemsStrip({ items, products }: { items: OrderItemBrief[]; products: Product[] }) {
+  if (items.length === 0) {
+    return <p className="text-xs text-neutral-600">Nenhum produto neste pedido ainda — abra “Detalhes” para adicionar.</p>;
+  }
+  const rows = items.map((item) => ({
+    item,
+    product: products.find((p) => p.id === item.product_id) ?? null,
+  }));
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex shrink-0 -space-x-2">
+        {rows.slice(0, 4).map(({ item, product }, i) => (
+          <div
+            key={i}
+            className="relative h-11 w-11 overflow-hidden rounded-lg border-2 border-neutral-950 bg-neutral-800"
+            title={product?.name ?? "Produto"}
+          >
+            {product?.photo_urls[0] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={product.photo_urls[0]}
+                alt=""
+                className="h-full w-full object-cover"
+                style={focusStyle(product.photo_focus, product.photo_urls[0])}
+              />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-sm text-neutral-500">
+                {(product?.name ?? "?").slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            {item.quantity > 1 && (
+              <span className="absolute bottom-0 right-0 rounded-tl bg-black/75 px-1 text-[10px] font-semibold text-white">
+                {item.quantity}×
+              </span>
+            )}
+          </div>
+        ))}
+        {rows.length > 4 && (
+          <div className="flex h-11 w-11 items-center justify-center rounded-lg border-2 border-neutral-950 bg-neutral-800 text-xs text-neutral-300">
+            +{rows.length - 4}
+          </div>
+        )}
+      </div>
+      <p className="line-clamp-2 min-w-0 text-sm text-neutral-300">
+        {rows.map(({ item, product }) => `${item.quantity}× ${product?.name ?? "Produto"}`).join(" · ")}
+      </p>
+    </div>
+  );
+}
+
+export default function PedidosPage() {
+  const { status, accessToken, currentOrganizationId } = useAuth();
+  const router = useRouter();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [defaultCostProfile, setDefaultCostProfile] = useState<CostProfile | null>(null);
+  const [itemsByOrder, setItemsByOrder] = useState<Record<string, OrderItem[]>>({});
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [pdfOrderId, setPdfOrderId] = useState<string | null>(null);
+
+  const [customerId, setCustomerId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [newStatus, setNewStatus] = useState<OrderStatus>("quote");
+  const [dueMode, setDueMode] = useState<"relative" | "date" | "none">("relative");
+  const [dueAmount, setDueAmount] = useState("7");
+  const [dueUnit, setDueUnit] = useState<"days" | "weeks" | "months">("days");
+  const [dueDate, setDueDate] = useState("");
+  const [filter, setFilter] = useState<"all" | ProdKey>("all");
+  // Filtro por status vindo do link (ex.: barra do gráfico do Painel). Lido
+  // depois de montar: ao navegar dentro do app, a URL nova só existe nesse ponto.
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const wanted = new URLSearchParams(window.location.search).get("status");
+      if (!wanted) return;
+      setStatusFilter(wanted);
+      window.history.replaceState(window.history.state, "", window.location.pathname);
+    }, 0);
+    return () => clearTimeout(id);
+    // Lido de novo quando a lista termina de carregar: navegando dentro do
+    // app, a URL nova pode chegar depois da montagem.
+  }, [isLoading]);
+
+  // Produtos escolhidos no formulário de novo pedido (gravados ao salvar).
+  type DraftLine = { key: string; productId: string; quantity: string; unitCost: string; unitPrice: string };
+  const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
+  const [draftProductId, setDraftProductId] = useState("");
+  const [draftQuantity, setDraftQuantity] = useState("1");
+  const [draftUnitCost, setDraftUnitCost] = useState("");
+  const [draftUnitPrice, setDraftUnitPrice] = useState("");
+  const [isPricingDraft, setIsPricingDraft] = useState(false);
+
+  const [itemProductId, setItemProductId] = useState("");
+  const [itemQuantity, setItemQuantity] = useState("1");
+  const [itemUnitCost, setItemUnitCost] = useState("");
+  const [itemUnitPrice, setItemUnitPrice] = useState("");
+  const [isPricingItem, setIsPricingItem] = useState(false);
+  const [isAddingItem, setIsAddingItem] = useState(false);
+
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editCustomerId, setEditCustomerId] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
+  const [editProduction, setEditProduction] = useState<ProductionStatus>("todo");
+  const [editStatus, setEditStatus] = useState<OrderStatus>("quote");
+  const [isSavingOrderEdit, setIsSavingOrderEdit] = useState(false);
+
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editItemProductId, setEditItemProductId] = useState("");
+  const [editItemQuantity, setEditItemQuantity] = useState("1");
+  const [editItemUnitCost, setEditItemUnitCost] = useState("");
+  const [editItemUnitPrice, setEditItemUnitPrice] = useState("");
+  const [isPricingItemEdit, setIsPricingItemEdit] = useState(false);
+  const [isSavingItemEdit, setIsSavingItemEdit] = useState(false);
+
+  const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
+
+  // Rascunho do que está sendo preenchido (novo pedido, edição de pedido e
+  // item sendo adicionado): volta se o celular fechar o app em segundo plano.
+  const draftKey = `pedidos:${currentOrganizationId}`;
+  const draftChecked = useRef(false);
+  const draft = {
+    showForm, customerId, notes, newStatus, dueMode, dueAmount, dueUnit, dueDate,
+    editingOrderId, editCustomerId, editNotes, editDueDate, editProduction, editStatus,
+    expandedOrderId, itemProductId, itemQuantity, itemUnitCost, itemUnitPrice,
+  };
+  type Draft = typeof draft;
+  const draftJson = JSON.stringify(draft);
+
+  useEffect(() => {
+    if (!currentOrganizationId || draftChecked.current) return;
+    const id = setTimeout(() => {
+      draftChecked.current = true;
+      const d = readDraft<Draft>(draftKey);
+      if (!d) return;
+      setShowForm(d.showForm);
+      setCustomerId(d.customerId);
+      setNotes(d.notes);
+      setNewStatus(d.newStatus);
+      setDueMode(d.dueMode);
+      setDueAmount(d.dueAmount);
+      setDueUnit(d.dueUnit);
+      setDueDate(d.dueDate);
+      setEditingOrderId(d.editingOrderId);
+      setEditCustomerId(d.editCustomerId);
+      setEditNotes(d.editNotes);
+      setEditDueDate(d.editDueDate);
+      setEditProduction(d.editProduction);
+      setEditStatus(d.editStatus);
+      setExpandedOrderId(d.expandedOrderId);
+      setItemProductId(d.itemProductId);
+      setItemQuantity(d.itemQuantity);
+      setItemUnitCost(d.itemUnitCost);
+      setItemUnitPrice(d.itemUnitPrice);
+    }, 0);
+    return () => clearTimeout(id);
+  }, [currentOrganizationId, draftKey]);
+
+  useEffect(() => {
+    if (!draftChecked.current || !currentOrganizationId) return;
+    const d = JSON.parse(draftJson) as Draft;
+    const busy = d.showForm || d.editingOrderId !== null || (d.expandedOrderId !== null && d.itemProductId !== "");
+    if (busy) writeDraft(draftKey, d);
+    else clearDraft(draftKey);
+  }, [draftJson, draftKey, currentOrganizationId]);
+
+  // Link vindo de outra tela (ex.: Clientes): /pedidos?pedido=<id> abre e
+  // mostra esse pedido.
+  useEffect(() => {
+    if (isLoading || orders.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get("pedido");
+    if (!wanted || !orders.some((o) => o.id === wanted)) return;
+    const id = setTimeout(() => {
+      window.history.replaceState(window.history.state, "", window.location.pathname);
+      setFilter("all");
+      setExpandedOrderId(wanted);
+      setTimeout(() => {
+        window.document.getElementById(`pedido-${wanted}`)?.scrollIntoView({ block: "start" });
+      }, 150);
+    }, 0);
+    return () => clearTimeout(id);
+  }, [isLoading, orders]);
+
+  // Pedido que estava aberto (restaurado do rascunho): carrega seus itens.
+  useEffect(() => {
+    if (!expandedOrderId || !accessToken || itemsByOrder[expandedOrderId] !== undefined) return;
+    let cancelled = false;
+    apiFetch<OrderItem[]>(`${orgPath}/orders/${expandedOrderId}/items`, { accessToken })
+      .then((data) => {
+        if (!cancelled) setItemsByOrder((prev) => ({ ...prev, [expandedOrderId]: data }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedOrderId, accessToken, itemsByOrder, orgPath]);
+
+  const customerName = useCallback(
+    (id: string) => customers.find((c) => c.id === id)?.name ?? "—",
+    [customers]
+  );
+
+  const productName = useCallback(
+    (id: string | null) => (id ? products.find((p) => p.id === id)?.name ?? "—" : "—"),
+    [products]
+  );
+
+  const load = useCallback(async () => {
+    if (!accessToken || !currentOrganizationId) return;
+    setIsLoading(true);
+    try {
+      const [ordersData, customersData, productsData, profilesData] = await Promise.all([
+        apiFetch<Order[]>(`${orgPath}/orders`, { accessToken }),
+        apiFetch<Customer[]>(`${orgPath}/customers`, { accessToken }),
+        apiFetch<Product[]>(`${orgPath}/products`, { accessToken }),
+        apiFetch<CostProfile[]>(`${orgPath}/cost-profiles`, { accessToken }),
+      ]);
+      setOrders(ordersData);
+      setCustomers(customersData);
+      setProducts(productsData);
+      setDefaultCostProfile(profilesData.find((p) => p.is_default) ?? profilesData[0] ?? null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao carregar pedidos.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [accessToken, currentOrganizationId, orgPath]);
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/login");
+      return;
+    }
+    if (status !== "authenticated") return;
+    const timeoutId = setTimeout(load, 0);
+    return () => clearTimeout(timeoutId);
+  }, [status, router, load]);
+
+  const createDueDate =
+    dueMode === "none"
+      ? ""
+      : dueMode === "date"
+        ? dueDate
+        : Number(dueAmount) > 0
+          ? addDuration(Number(dueAmount), dueUnit)
+          : "";
+
+  async function handleSetProduction(order: Order, next: ProductionStatus) {
+    if (!accessToken || order.production_status === next) return;
+    setError(null);
+    const previous = orders;
+    setOrders((list) => list.map((o) => (o.id === order.id ? { ...o, production_status: next } : o)));
+    try {
+      await apiFetch(`${orgPath}/orders/${order.id}`, {
+        method: "PATCH",
+        accessToken,
+        body: JSON.stringify({ production_status: next }),
+      });
+    } catch (err) {
+      setOrders(previous);
+      setError(err instanceof ApiError ? err.message : "Falha ao mudar o status.");
+    }
+  }
+
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
+    if (!accessToken || !customerId) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const created = await apiFetch<Order>(`${orgPath}/orders`, {
+        method: "POST",
+        accessToken,
+        body: JSON.stringify({
+          customer_id: customerId,
+          notes: notes || null,
+          due_date: createDueDate || null,
+          status: newStatus,
+        }),
+      });
+      // Produtos escolhidos no formulário, na ordem em que foram adicionados.
+      // Um produto escolhido mas ainda não adicionado à lista também entra.
+      const pending = draftProductId
+        ? [{ key: "pendente", productId: draftProductId, quantity: draftQuantity, unitCost: draftUnitCost, unitPrice: draftUnitPrice }]
+        : [];
+      for (const line of [...draftLines, ...pending]) {
+        await apiFetch(`${orgPath}/orders/${created.id}/items`, {
+          method: "POST",
+          accessToken,
+          body: JSON.stringify({
+            product_id: line.productId,
+            quantity: Math.max(1, Number(line.quantity || 1)),
+            unit_cost: line.unitCost ? Number(line.unitCost) : null,
+            unit_price: line.unitPrice ? Number(line.unitPrice) : null,
+          }),
+        });
+      }
+      setDraftLines([]);
+      setDraftProductId("");
+      setDraftQuantity("1");
+      setDraftUnitCost("");
+      setDraftUnitPrice("");
+      setCustomerId("");
+      setNotes("");
+      setNewStatus("quote");
+      setDueMode("relative");
+      setDueAmount("7");
+      setDueUnit("days");
+      setDueDate("");
+      setShowForm(false);
+      await load();
+      // O pedido novo já abre na parte de produtos, pronto para receber itens.
+      void openProducts(created.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao criar pedido.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleAdvance(order: Order) {
+    if (!accessToken) return;
+    const next = nextStatus(order.status);
+    if (!next) return;
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/orders/${order.id}/transition`, {
+        method: "POST",
+        accessToken,
+        body: JSON.stringify({ status: next }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao avançar status.");
+    }
+  }
+
+  function startEditOrder(order: Order) {
+    // Editar também mostra os produtos do pedido, logo abaixo dos dados.
+    if (expandedOrderId !== order.id) void toggleItems(order.id);
+    setEditingOrderId(order.id);
+    setEditCustomerId(order.customer_id);
+    setEditNotes(order.notes ?? "");
+    setEditDueDate(order.due_date ? order.due_date.slice(0, 10) : "");
+    setEditProduction(order.production_status);
+    setEditStatus(order.status);
+  }
+
+  function cancelEditOrder() {
+    setEditingOrderId(null);
+  }
+
+  async function handleSaveOrderEdit(order: Order) {
+    if (!accessToken) return;
+    setIsSavingOrderEdit(true);
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/orders/${order.id}`, {
+        method: "PATCH",
+        accessToken,
+        body: JSON.stringify({
+          customer_id: editCustomerId,
+          notes: editNotes,
+          // Só manda o que mudou: trocar o status já ajusta a situação no
+          // servidor, e reenviar a situação antiga desfaria esse ajuste.
+          ...(editStatus !== order.status ? { status: editStatus } : {}),
+          ...(editProduction !== order.production_status ? { production_status: editProduction } : {}),
+          ...(editDueDate ? { due_date: editDueDate } : { clear_due_date: true }),
+        }),
+      });
+      setEditingOrderId(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar pedido.");
+    } finally {
+      setIsSavingOrderEdit(false);
+    }
+  }
+
+  async function handleDeleteOrder(order: Order) {
+    if (!accessToken) return;
+    if (!window.confirm(`Excluir o pedido de "${customerName(order.customer_id)}"?`)) return;
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/orders/${order.id}`, { method: "DELETE", accessToken });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao excluir pedido.");
+    }
+  }
+
+  function startEditItem(item: OrderItem) {
+    setEditingItemId(item.id);
+    setEditItemProductId(item.product_id ?? "");
+    setEditItemQuantity(String(item.quantity));
+    setEditItemUnitCost(item.unit_cost != null ? String(item.unit_cost) : "");
+    setEditItemUnitPrice(item.unit_price != null ? String(item.unit_price) : "");
+  }
+
+  function cancelEditItem() {
+    setEditingItemId(null);
+  }
+
+  async function handleEditPickProduct(productId: string) {
+    setEditItemProductId(productId);
+    setEditItemUnitCost("");
+    setEditItemUnitPrice("");
+    if (!productId) return;
+    const manualPrice = products.find((p) => p.id === productId)?.manual_price;
+    if (manualPrice != null) {
+      setEditItemUnitPrice(manualPrice.toFixed(2));
+      return;
+    }
+    if (!accessToken || !defaultCostProfile) return;
+    setIsPricingItemEdit(true);
+    try {
+      const cost = await apiFetch<ProductCost>(
+        `${orgPath}/products/${productId}/cost?cost_profile_id=${defaultCostProfile.id}`,
+        { accessToken }
+      );
+      setEditItemUnitCost(cost.production_cost.toFixed(2));
+      setEditItemUnitPrice(cost.suggested_price.toFixed(2));
+    } catch (err) {
+      // 422 = produto sem preço definido: o preço fica em branco para digitar.
+      if (!(err instanceof ApiError && err.status === 422)) {
+        setError(err instanceof ApiError ? err.message : "Falha ao calcular custo do produto.");
+      }
+    } finally {
+      setIsPricingItemEdit(false);
+    }
+  }
+
+  async function handleSaveItemEdit(orderId: string, item: OrderItem) {
+    if (!accessToken) return;
+    setIsSavingItemEdit(true);
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/orders/${orderId}/items/${item.id}`, {
+        method: "PATCH",
+        accessToken,
+        body: JSON.stringify({
+          product_id: editItemProductId || null,
+          quantity: Number(editItemQuantity || 1),
+          unit_cost: editItemUnitCost ? Number(editItemUnitCost) : null,
+          unit_price: editItemUnitPrice ? Number(editItemUnitPrice) : null,
+        }),
+      });
+      setEditingItemId(null);
+      const data = await apiFetch<OrderItem[]>(`${orgPath}/orders/${orderId}/items`, { accessToken });
+      setItemsByOrder((prev) => ({ ...prev, [orderId]: data }));
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar item.");
+    } finally {
+      setIsSavingItemEdit(false);
+    }
+  }
+
+  async function handleDeleteItem(orderId: string, item: OrderItem) {
+    if (!accessToken) return;
+    if (!window.confirm("Remover este item do pedido?")) return;
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/orders/${orderId}/items/${item.id}`, {
+        method: "DELETE",
+        accessToken,
+      });
+      const data = await apiFetch<OrderItem[]>(`${orgPath}/orders/${orderId}/items`, { accessToken });
+      setItemsByOrder((prev) => ({ ...prev, [orderId]: data }));
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao remover item.");
+    }
+  }
+
+  // Preço e custo sugeridos de um produto: o preço manual dele, ou o cálculo
+  // pelo perfil de custo padrão. Sem nenhum dos dois, fica em branco.
+  async function suggestedPricing(productId: string): Promise<{ cost: string; price: string }> {
+    const manualPrice = products.find((p) => p.id === productId)?.manual_price;
+    if (manualPrice != null) return { cost: "", price: manualPrice.toFixed(2) };
+    if (!accessToken || !defaultCostProfile) return { cost: "", price: "" };
+    try {
+      const cost = await apiFetch<ProductCost>(
+        `${orgPath}/products/${productId}/cost?cost_profile_id=${defaultCostProfile.id}`,
+        { accessToken }
+      );
+      return { cost: cost.production_cost.toFixed(2), price: cost.suggested_price.toFixed(2) };
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 422)) {
+        setError(err instanceof ApiError ? err.message : "Falha ao calcular custo do produto.");
+      }
+      return { cost: "", price: "" };
+    }
+  }
+
+  async function handleDraftPick(productId: string) {
+    setDraftProductId(productId);
+    setDraftUnitCost("");
+    setDraftUnitPrice("");
+    if (!productId) return;
+    setIsPricingDraft(true);
+    const { cost, price } = await suggestedPricing(productId);
+    setDraftUnitCost(cost);
+    setDraftUnitPrice(price);
+    setIsPricingDraft(false);
+  }
+
+  function addDraftLine() {
+    if (!draftProductId) return;
+    setDraftLines((lines) => [
+      ...lines,
+      {
+        key: `${draftProductId}-${Date.now()}`,
+        productId: draftProductId,
+        quantity: draftQuantity || "1",
+        unitCost: draftUnitCost,
+        unitPrice: draftUnitPrice,
+      },
+    ]);
+    setDraftProductId("");
+    setDraftQuantity("1");
+    setDraftUnitCost("");
+    setDraftUnitPrice("");
+  }
+
+  function updateDraftLine(key: string, patch: Partial<DraftLine>) {
+    setDraftLines((lines) => lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  const draftTotal = draftLines.reduce(
+    (sum, l) => sum + Number(l.unitPrice || 0) * Math.max(1, Number(l.quantity || 1)),
+    0
+  );
+
+  // Abre os detalhes do pedido e rola até "Produtos do pedido".
+  async function openProducts(orderId: string) {
+    if (expandedOrderId !== orderId) await toggleItems(orderId);
+    setTimeout(() => {
+      document.getElementById(`produtos-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 350);
+  }
+
+  async function toggleItems(orderId: string) {
+    if (expandedOrderId === orderId) {
+      setExpandedOrderId(null);
+      return;
+    }
+    setExpandedOrderId(orderId);
+    setItemProductId("");
+    setItemQuantity("1");
+    setItemUnitCost("");
+    setItemUnitPrice("");
+    if (!itemsByOrder[orderId] && accessToken) {
+      try {
+        const data = await apiFetch<OrderItem[]>(`${orgPath}/orders/${orderId}/items`, { accessToken });
+        setItemsByOrder((prev) => ({ ...prev, [orderId]: data }));
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Falha ao carregar itens do pedido.");
+      }
+    }
+  }
+
+  async function handlePickProduct(productId: string) {
+    setItemProductId(productId);
+    setItemUnitCost("");
+    setItemUnitPrice("");
+    if (!productId) return;
+    const manualPrice = products.find((p) => p.id === productId)?.manual_price;
+    if (manualPrice != null) {
+      setItemUnitPrice(manualPrice.toFixed(2));
+      return;
+    }
+    if (!accessToken || !defaultCostProfile) return;
+    setIsPricingItem(true);
+    try {
+      const cost = await apiFetch<ProductCost>(
+        `${orgPath}/products/${productId}/cost?cost_profile_id=${defaultCostProfile.id}`,
+        { accessToken }
+      );
+      setItemUnitCost(cost.production_cost.toFixed(2));
+      setItemUnitPrice(cost.suggested_price.toFixed(2));
+    } catch (err) {
+      // 422 = produto sem preço definido: o preço fica em branco para digitar.
+      if (!(err instanceof ApiError && err.status === 422)) {
+        setError(err instanceof ApiError ? err.message : "Falha ao calcular custo do produto.");
+      }
+    } finally {
+      setIsPricingItem(false);
+    }
+  }
+
+  async function handleAddItem(orderId: string, event: React.FormEvent) {
+    event.preventDefault();
+    if (!accessToken || !itemProductId) return;
+    setIsAddingItem(true);
+    setError(null);
+    try {
+      await apiFetch(`${orgPath}/orders/${orderId}/items`, {
+        method: "POST",
+        accessToken,
+        body: JSON.stringify({
+          product_id: itemProductId,
+          quantity: Number(itemQuantity || 1),
+          unit_cost: itemUnitCost ? Number(itemUnitCost) : null,
+          unit_price: itemUnitPrice ? Number(itemUnitPrice) : null,
+        }),
+      });
+      setItemProductId("");
+      setItemQuantity("1");
+      setItemUnitCost("");
+      setItemUnitPrice("");
+      const data = await apiFetch<OrderItem[]>(`${orgPath}/orders/${orderId}/items`, { accessToken });
+      setItemsByOrder((prev) => ({ ...prev, [orderId]: data }));
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao adicionar item.");
+    } finally {
+      setIsAddingItem(false);
+    }
+  }
+
+  const visibleOrders = orders.filter(
+    (o) =>
+      (filter === "all" || effectiveProduction(o) === filter) && (!statusFilter || o.status === statusFilter)
+  );
+
+  if (status !== "authenticated") {
+    return (
+      <main className="flex min-h-screen items-center justify-center">
+        <p className="text-neutral-400">Carregando…</p>
+      </main>
+    );
+  }
+
+  return (
+    <AppShell title="Pedidos">
+      <div className="mx-auto max-w-5xl space-y-6">
+        {error && <p className="rounded bg-red-950 p-2 text-sm text-red-300">{error}</p>}
+
+        <div className="flex flex-wrap gap-2">
+          {(["all", "todo", "doing", "late", "done"] as const).map((key) => {
+            const count =
+              key === "all" ? orders.length : orders.filter((o) => effectiveProduction(o) === key).length;
+            const active = filter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm transition ${
+                  active
+                    ? key === "all"
+                      ? "border-blue-500 bg-blue-950 text-blue-200"
+                      : PROD_ACTIVE[key]
+                    : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                }`}
+              >
+                {key === "all" ? "Todos" : PROD_LABELS[key]}
+                <span className="rounded-full bg-black/30 px-1.5 text-xs">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {statusFilter && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-neutral-500">Mostrando só o status:</span>
+            <button
+              onClick={() => {
+                setStatusFilter(null);
+                window.history.replaceState(window.history.state, "", window.location.pathname);
+              }}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs ${STATUS_TONE[statusFilter] ?? "bg-neutral-800 text-neutral-300"}`}
+            >
+              {STATUS_LABELS[statusFilter] ?? statusFilter}
+              <span aria-hidden>×</span>
+              <span className="sr-only">Remover filtro</span>
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-neutral-500">{visibleOrders.length} pedido(s)</p>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500"
+          >
+            {showForm ? "Cancelar" : "+ Novo pedido"}
+          </button>
+        </div>
+
+        {showForm && (
+          <form
+            onSubmit={handleCreate}
+            className="grid grid-cols-1 gap-3 rounded-xl border border-neutral-800 bg-neutral-950/50 p-4 sm:grid-cols-2"
+          >
+            <select required value={customerId} onChange={(e) => setCustomerId(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2">
+              <option value="">Selecione o cliente…</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <input placeholder="Observações (opcional)" value={notes} onChange={(e) => setNotes(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs text-neutral-500">Status do pedido</label>
+              <select value={newStatus} onChange={(e) => setNewStatus(e.target.value as OrderStatus)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:w-auto">
+                {ORDER_STATUSES.map((s) => (
+                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="block text-xs text-neutral-500">Prazo de entrega</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <select value={dueMode} onChange={(e) => setDueMode(e.target.value as typeof dueMode)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
+                  <option value="relative">Em quanto tempo</option>
+                  <option value="date">Data exata</option>
+                  <option value="none">Sem prazo</option>
+                </select>
+                {dueMode === "relative" && (
+                  <>
+                    <input type="number" min={1} value={dueAmount} onChange={(e) => setDueAmount(e.target.value)} className="w-20 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                    <select value={dueUnit} onChange={(e) => setDueUnit(e.target.value as typeof dueUnit)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
+                      <option value="days">dia(s)</option>
+                      <option value="weeks">semana(s)</option>
+                      <option value="months">mês(es)</option>
+                    </select>
+                  </>
+                )}
+                {dueMode === "date" && (
+                  <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                )}
+                <span className="text-xs text-neutral-500">
+                  {createDueDate ? `Entrega até ${formatDay(createDueDate)}` : "Sem data de entrega"}
+                </span>
+              </div>
+            </div>
+            <div className="space-y-3 rounded-lg border border-neutral-800 p-3 sm:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-neutral-200">Produtos do pedido</p>
+                {draftLines.length > 0 && (
+                  <span className="text-sm text-neutral-300">
+                    Total: <span className="font-semibold text-neutral-100">{formatCurrency(draftTotal)}</span>
+                  </span>
+                )}
+              </div>
+
+              {draftLines.length > 0 && (
+                <ul className="space-y-2">
+                  {draftLines.map((line) => {
+                    const subtotal = Number(line.unitPrice || 0) * Math.max(1, Number(line.quantity || 1));
+                    return (
+                      <li
+                        key={line.key}
+                        className="grid grid-cols-[1fr_auto] items-center gap-2 rounded border border-neutral-800 bg-neutral-900/60 p-2 sm:grid-cols-[1fr_5rem_8rem_6.5rem_auto]"
+                      >
+                        <span className="col-span-2 truncate text-sm text-neutral-200 sm:col-span-1">
+                          {productName(line.productId)}
+                        </span>
+                        <label className="flex items-center gap-1 text-xs text-neutral-500">
+                          Qtd.
+                          <input
+                            type="number"
+                            min={1}
+                            value={line.quantity}
+                            onChange={(e) => updateDraftLine(line.key, { quantity: e.target.value })}
+                            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100"
+                          />
+                        </label>
+                        <label className="flex items-center gap-1 text-xs text-neutral-500">
+                          R$
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            placeholder="Preço unit."
+                            value={line.unitPrice}
+                            onChange={(e) => updateDraftLine(line.key, { unitPrice: e.target.value })}
+                            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100"
+                          />
+                        </label>
+                        <span className="text-right text-sm text-neutral-300">{formatCurrency(subtotal)}</span>
+                        <button
+                          type="button"
+                          onClick={() => setDraftLines((lines) => lines.filter((l) => l.key !== line.key))}
+                          className="rounded-full border border-red-500/40 px-3 py-1 text-xs text-red-300 hover:bg-red-500/10"
+                        >
+                          Remover
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {products.length === 0 ? (
+                <p className="text-xs text-yellow-300">Cadastre um produto na aba Produtos para poder adicioná-lo aqui.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-[1fr_5rem_8rem_auto]">
+                  <ProductPicker
+                    products={products}
+                    value={draftProductId}
+                    onChange={handleDraftPick}
+                    className="col-span-2 sm:col-span-1"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="Qtd."
+                    value={draftQuantity}
+                    onChange={(e) => setDraftQuantity(e.target.value)}
+                    className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    placeholder={isPricingDraft ? "Calculando…" : "Preço unit."}
+                    value={draftUnitPrice}
+                    onChange={(e) => setDraftUnitPrice(e.target.value)}
+                    className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={addDraftLine}
+                    disabled={!draftProductId || isPricingDraft}
+                    className="col-span-2 rounded border border-blue-500/60 px-4 py-2 text-sm font-medium text-blue-300 hover:bg-blue-500/10 disabled:opacity-40 sm:col-span-1"
+                  >
+                    + Adicionar
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-neutral-500">
+                O preço vem preenchido pelo cadastro do produto; você pode mudar antes de salvar.
+              </p>
+            </div>
+            {customers.length === 0 && (
+              <p className="text-xs text-yellow-300 sm:col-span-2">
+                Nenhum cliente cadastrado ainda — crie um cliente primeiro na aba Clientes.
+              </p>
+            )}
+            <button type="submit" disabled={isSaving || !customerId} className="rounded bg-blue-600 px-4 py-2 font-medium disabled:opacity-50 sm:col-span-2">
+              {isSaving
+                ? "Salvando…"
+                : draftLines.length > 0
+                  ? `Salvar pedido · ${draftLines.length} produto(s) · ${formatCurrency(draftTotal)}`
+                  : "Salvar pedido"}
+            </button>
+          </form>
+        )}
+
+        <div className="rounded-xl border border-neutral-800 divide-y divide-neutral-800">
+          {isLoading ? (
+            <p className="px-4 py-6 text-center text-sm text-neutral-500">Carregando…</p>
+          ) : visibleOrders.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-neutral-500">
+              {orders.length === 0 ? "Nenhum pedido ainda." : "Nenhum pedido neste filtro."}
+            </p>
+          ) : (
+            visibleOrders.map((order) => {
+              const next = nextStatus(order.status);
+              const prod = effectiveProduction(order);
+              const dueText = dueLabel(order);
+              return (
+                <div key={order.id} id={`pedido-${order.id}`} className="scroll-mt-24 space-y-3 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{customerName(order.customer_id)}</p>
+                      <p className="text-xs text-neutral-500">Pedido em {formatDate(order.created_at)}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${PROD_TONE[prod]}`}>
+                        {PROD_LABELS[prod]}
+                      </span>
+                      <span className={`rounded px-2 py-0.5 text-xs ${STATUS_TONE[order.status] ?? "bg-neutral-800 text-neutral-300"}`}>
+                        {STATUS_LABELS[order.status] ?? order.status}
+                      </span>
+                    </div>
+                  </div>
+                  <OrderItemsStrip items={order.items ?? []} products={products} />
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-neutral-300">
+                    <span>
+                      Total: <span className="font-medium text-neutral-100">{formatCurrency(order.total_amount)}</span>
+                    </span>
+                    {order.due_date ? (
+                      <span className={prod === "late" ? "font-medium text-red-400" : ""}>
+                        Prazo: {formatDay(order.due_date)}
+                        {dueText ? ` · ${dueText}` : ""}
+                      </span>
+                    ) : (
+                      <span className="text-neutral-600">Sem prazo</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="mr-1 text-xs text-neutral-500">Situação:</span>
+                    {(["todo", "doing", "done"] as const).map((s) => {
+                      const selected = order.production_status === s;
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => handleSetProduction(order, s)}
+                          aria-pressed={selected}
+                          className={`rounded-full border px-3 py-1 text-xs transition ${
+                            selected ? PROD_ACTIVE[s] : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                          }`}
+                        >
+                          {PROD_LABELS[s]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-2 text-sm">
+                    <button
+                      onClick={() => toggleItems(order.id)}
+                      aria-expanded={expandedOrderId === order.id}
+                      className="flex items-center gap-1 text-blue-400 hover:underline"
+                    >
+                      Detalhes
+                      <span
+                        className={`inline-block text-xs transition-transform duration-300 ${
+                          expandedOrderId === order.id ? "rotate-180" : ""
+                        }`}
+                      >
+                        ▾
+                      </span>
+                    </button>
+                    {next && (
+                      <button onClick={() => handleAdvance(order)} className="text-green-400 hover:underline">
+                        Avançar → {STATUS_LABELS[next]}
+                      </button>
+                    )}
+                    <button onClick={() => startEditOrder(order)} className="text-blue-400 hover:underline">
+                      Editar
+                    </button>
+                    <button onClick={() => openProducts(order.id)} className="text-blue-400 hover:underline">
+                      Produtos ({(order.items ?? []).length})
+                    </button>
+                    <button onClick={() => setPdfOrderId(order.id)} className="text-amber-400 hover:underline">
+                      PDF · Recibo · WhatsApp
+                    </button>
+                    <button onClick={() => handleDeleteOrder(order)} className="text-red-400 hover:underline">
+                      Excluir
+                    </button>
+                  </div>
+                  {editingOrderId === order.id && (
+                    <div className="rounded border border-neutral-800 bg-neutral-950/80 p-3">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <div className="w-full">
+                          <label className="mb-1 block text-xs text-neutral-500">Cliente</label>
+                          <select value={editCustomerId} onChange={(e) => setEditCustomerId(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
+                            {customers.map((c) => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="w-full">
+                          <label className="mb-1 block text-xs text-neutral-500">Observações</label>
+                          <input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                        </div>
+                        <div className="w-full">
+                          <label className="mb-1 block text-xs text-neutral-500">Prazo (deixe vazio para sem prazo)</label>
+                          <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                        </div>
+                        <div className="w-full">
+                          <label className="mb-1 block text-xs text-neutral-500">Status do pedido</label>
+                          <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as OrderStatus)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
+                            {ORDER_STATUSES.map((s) => (
+                              <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="w-full">
+                          <label className="mb-1 block text-xs text-neutral-500">Situação</label>
+                          <select value={editProduction} onChange={(e) => setEditProduction(e.target.value as ProductionStatus)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
+                            <option value="todo">A fazer</option>
+                            <option value="doing">Em andamento</option>
+                            <option value="done">Concluído</option>
+                          </select>
+                        </div>
+                        <div className="flex gap-2 sm:col-span-2">
+                          <button onClick={() => handleSaveOrderEdit(order)} disabled={isSavingOrderEdit} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium disabled:opacity-50">
+                            {isSavingOrderEdit ? "Salvando…" : "Salvar"}
+                          </button>
+                          <button onClick={cancelEditOrder} className="rounded border border-neutral-700 px-4 py-2 text-sm text-neutral-400 hover:border-neutral-500">
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div
+                    className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
+                      expandedOrderId === order.id ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                  {(expandedOrderId === order.id || itemsByOrder[order.id] !== undefined) && (
+                    <div className="space-y-4 rounded border border-neutral-800 bg-neutral-950/80 p-3">
+                      <OrderSummary
+                        order={order}
+                        customer={customers.find((c) => c.id === order.customer_id) ?? null}
+                        items={itemsByOrder[order.id]}
+                      />
+                      <div id={`produtos-${order.id}`} className="flex scroll-mt-24 items-center justify-between gap-2 border-t border-neutral-800 pt-3">
+                        <h3 className="text-sm font-semibold text-neutral-200">Produtos do pedido</h3>
+                        <span className="text-xs text-neutral-500">Edite, remova ou adicione abaixo</span>
+                      </div>
+                      {!itemsByOrder[order.id] ? (
+                        <p className="text-sm text-neutral-500">Carregando itens…</p>
+                      ) : itemsByOrder[order.id].length === 0 ? (
+                        <p className="text-sm text-neutral-500">Nenhum item neste pedido ainda.</p>
+                      ) : (
+                        <ul className="space-y-2 text-sm text-neutral-300">
+                          {itemsByOrder[order.id].map((item) => (
+                            <li key={item.id} className="space-y-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">
+                                    {productName(item.product_id)} · Qtd. {item.quantity}
+                                  </span>
+                                  <span className="block text-xs text-neutral-500">
+                                    Unit.: {formatCurrency(item.unit_price ?? 0)} · Custo unit.:{" "}
+                                    {formatCurrency(item.unit_cost ?? 0)}
+                                  </span>
+                                </span>
+                                <span className="shrink-0">{formatCurrency((item.unit_price ?? 0) * item.quantity)}</span>
+                                <span className="shrink-0 space-x-2">
+                                  <button
+                                    onClick={() => (editingItemId === item.id ? cancelEditItem() : startEditItem(item))}
+                                    className="rounded-full border border-blue-500/40 px-3 py-1 text-xs text-blue-300 hover:bg-blue-500/10"
+                                  >
+                                    {editingItemId === item.id ? "Fechar" : "Editar"}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteItem(order.id, item)}
+                                    className="rounded-full border border-red-500/40 px-3 py-1 text-xs text-red-300 hover:bg-red-500/10"
+                                  >
+                                    Remover
+                                  </button>
+                                </span>
+                              </div>
+                              {editingItemId === item.id && (
+                                <div className="grid grid-cols-1 gap-2 rounded border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-2">
+                                  <div className="sm:col-span-2">
+                                    <label className="mb-1 block text-xs text-neutral-500">Produto</label>
+                                    <ProductPicker
+                                      products={products}
+                                      value={editItemProductId}
+                                      onChange={handleEditPickProduct}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs text-neutral-500">Qtd.</label>
+                                    <input type="number" min={1} value={editItemQuantity} onChange={(e) => setEditItemQuantity(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs text-neutral-500">Custo unit.</label>
+                                    <input type="number" step="0.01" value={editItemUnitCost} onChange={(e) => setEditItemUnitCost(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs text-neutral-500">Preço unit.</label>
+                                    <input type="number" step="0.01" value={editItemUnitPrice} onChange={(e) => setEditItemUnitPrice(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                                  </div>
+                                  <div className="flex flex-wrap gap-2 sm:col-span-2">
+                                    <button onClick={() => handleSaveItemEdit(order.id, item)} disabled={isSavingItemEdit || isPricingItemEdit} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium disabled:opacity-50">
+                                      {isPricingItemEdit ? "Calculando…" : isSavingItemEdit ? "Salvando…" : "Salvar"}
+                                    </button>
+                                    <button onClick={cancelEditItem} className="rounded border border-neutral-700 px-4 py-2 text-sm text-neutral-400 hover:border-neutral-500">
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {products.length === 0 ? (
+                        <p className="text-xs text-yellow-300">
+                          Cadastre um produto na aba Produtos para poder adicioná-lo aqui.
+                        </p>
+                      ) : (
+                        <form
+                          onSubmit={(e) => handleAddItem(order.id, e)}
+                          className="grid grid-cols-1 gap-2 rounded-lg border border-dashed border-neutral-700 p-3 sm:grid-cols-2"
+                        >
+                          <p className="text-xs font-medium text-neutral-400 sm:col-span-2">Adicionar produto ao pedido</p>
+                          <ProductPicker
+                            products={products}
+                            value={itemProductId}
+                            onChange={handlePickProduct}
+                            className="sm:col-span-2"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="Qtd."
+                            value={itemQuantity}
+                            onChange={(e) => setItemQuantity(e.target.value)}
+                            className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                          />
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Custo unit."
+                            value={itemUnitCost}
+                            onChange={(e) => setItemUnitCost(e.target.value)}
+                            className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                          />
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Preço unit."
+                            value={itemUnitPrice}
+                            onChange={(e) => setItemUnitPrice(e.target.value)}
+                            className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                          />
+                          <button
+                            type="submit"
+                            disabled={isAddingItem || isPricingItem || !itemProductId}
+                            className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                          >
+                            {isPricingItem ? "Calculando…" : isAddingItem ? "Adicionando…" : "+ Adicionar produto"}
+                          </button>
+                          {!defaultCostProfile && (
+                            <p className="text-xs text-yellow-300 sm:col-span-2">
+                              Sem perfil de custo cadastrado — preencha custo/preço manualmente.
+                            </p>
+                          )}
+                        </form>
+                      )}
+                    </div>
+                  )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+      {pdfOrderId && accessToken && currentOrganizationId && (() => {
+        const pdfOrder = orders.find((o) => o.id === pdfOrderId);
+        if (!pdfOrder) return null;
+        return (
+          <OrderPdfDialog
+            order={pdfOrder}
+            customer={customers.find((c) => c.id === pdfOrder.customer_id) ?? null}
+            items={itemsByOrder[pdfOrder.id]}
+            products={products}
+            orgPath={orgPath}
+            orgId={currentOrganizationId}
+            accessToken={accessToken}
+            onClose={() => setPdfOrderId(null)}
+          />
+        );
+      })()}
+    </AppShell>
+  );
+}
