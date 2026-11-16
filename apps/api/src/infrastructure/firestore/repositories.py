@@ -89,6 +89,9 @@ class UserRepository:
             return None
         return self.session.hydrate(User, snap.id, snap.to_dict(), doc_ref)
 
+    def any_exists(self) -> bool:
+        return any(True for _ in self.client.collection("users").limit(1).stream())
+
     def create(self, *, email: str, password_hash: str, full_name: str | None) -> User:
         user = User(email=email, password_hash=password_hash, full_name=full_name)
         doc_ref = self.client.collection("users").document(str(user.id))

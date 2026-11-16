@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     imgbb_api_key: str = ""
 
     # Cadastro de novas contas (POST /auth/register). Fechado: a loja da Winner Cakes
-    # tem uma única conta, criada antes; ninguém mais se cadastra pelo site.
+    # tem uma única conta. Só a PRIMEIRA conta (banco vazio) pode ser criada pelo site.
     # Para reabrir, defina REGISTRATION_OPEN=true no ambiente da API.
     registration_open: bool = False
 

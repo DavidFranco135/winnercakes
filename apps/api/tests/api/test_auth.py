@@ -94,6 +94,12 @@ def test_registration_can_be_closed(client: TestClient, monkeypatch):
     from src.interfaces.http.v1 import auth as auth_routes
 
     monkeypatch.setattr(auth_routes.settings, "registration_open", False)
+    # A primeira conta (banco vazio) é a da dona da loja: pode ser criada.
+    first = client.post(
+        "/api/v1/auth/register",
+        json={"organization_name": "Dona", "email": "dona@x.io", "password": "senha-segura-123"},
+    )
+    assert first.status_code == 201
     response = client.post(
         "/api/v1/auth/register",
         json={"organization_name": "Outra", "email": "outra@x.io", "password": "senha-segura-123"},

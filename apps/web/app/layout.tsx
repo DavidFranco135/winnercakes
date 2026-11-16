@@ -3,7 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://winner-cakes.pages.dev"),
+  metadataBase: new URL("https://winnercakes.pages.dev"),
   title: "Winner Cakes",
   description: "Winner Cakes — confeitaria artesanal em São Gonçalo e Niterói. Toda semana tem Festival de Fatias.",
   manifest: "/manifest.json",

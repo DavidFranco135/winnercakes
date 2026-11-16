@@ -11,6 +11,7 @@ def _preflight(client: TestClient, origin: str):
 def test_winner_site_and_previews_are_allowed(client: TestClient):
     for origin in (
         "https://winner-cakes.pages.dev",
+        "https://winnercakes.pages.dev",
         "https://abc123.winner-cakes.pages.dev",
     ):
         response = _preflight(client, origin)

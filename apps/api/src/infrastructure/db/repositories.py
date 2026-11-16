@@ -49,6 +49,9 @@ class UserRepository:
     def get_by_id(self, user_id: UUID) -> User | None:
         return self.session.get(User, user_id)
 
+    def any_exists(self) -> bool:
+        return self.session.scalar(select(User.id).limit(1)) is not None
+
     def create(self, *, email: str, password_hash: str, full_name: str | None) -> User:
         user = User(email=email, password_hash=password_hash, full_name=full_name)
         self.session.add(user)

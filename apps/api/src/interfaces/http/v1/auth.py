@@ -5,6 +5,7 @@ from src.application.auth import use_cases
 from src.config import get_settings
 from src.domain.auth.dto import TokenPair
 from src.domain.shared.exceptions import DomainError
+from src.infrastructure.repositories import UserRepository
 from src.interfaces.http.dependencies import get_db
 from src.interfaces.http.errors import as_http_exception
 from src.interfaces.http.v1.schemas import (
@@ -39,7 +40,8 @@ def _set_refresh_cookie(response: Response, tokens: TokenPair) -> None:
 def register(
     payload: RegisterRequest, response: Response, db: Session = Depends(get_db)
 ) -> AuthResponse:
-    if not settings.registration_open:
+    # Fechado, exceto para criar a primeira conta (a da dona da loja).
+    if not settings.registration_open and UserRepository(db).any_exists():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="O cadastro de novas contas está fechado.",
