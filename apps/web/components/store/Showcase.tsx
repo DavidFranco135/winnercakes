@@ -3,9 +3,10 @@
 // Quadro de sabores (fatias do festival) e galeria de fotos das encomendas.
 
 import { useEffect, useState } from "react";
-import type { StoreFlavor, StoreGalleryPhoto } from "@/lib/store";
+import type { StoreCakeTable, StoreFaq, StoreFlavor, StoreGalleryPhoto } from "@/lib/store";
+import { formatBRL } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
-import { IconClose, Reveal } from "./ui";
+import { IconClose, IconPlus, IconWhatsapp, Reveal } from "./ui";
 
 export function FlavorsSection({
   flavors,
@@ -118,6 +119,113 @@ export function GallerySection({ photos, heading }: { photos?: StoreGalleryPhoto
           </figure>
         </div>
       )}
+    </section>
+  );
+}
+
+// Tabela de bolos: um cartão por formato (Redondos, Quadrados…), com foto,
+// tamanhos, rendimento e preço; cada linha abre o WhatsApp já com o pedido.
+export function CakeTablesSection({
+  tables,
+  note,
+  heading,
+  orderLink,
+}: {
+  tables?: StoreCakeTable[];
+  note?: string;
+  heading: React.ReactNode;
+  orderLink: (text: string) => string;
+}) {
+  const list = (tables ?? []).filter((t) => t.title.trim() && t.sizes.length > 0);
+  if (list.length === 0) return null;
+  return (
+    <section className="space-y-7">
+      <Reveal>{heading}</Reveal>
+      <div className="grid gap-5 lg:grid-cols-2">
+        {list.map((t, i) => (
+          <Reveal key={`${t.title}-${i}`} delay={i * 100}>
+            <div className="flex h-full flex-col overflow-hidden rounded-[32px] border border-[var(--line)] bg-[var(--surface)] shadow-sm">
+              {t.photo_url && (
+                <div className="relative aspect-[16/10] shrink-0 overflow-hidden bg-[var(--accent-soft)]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imgSrc(t.photo_url, IMG_WIDTH.card)} alt={`Bolo ${t.title}`} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
+                  <span className="absolute left-4 top-4 rounded-full bg-[var(--accent)] px-4 py-1.5 font-[family-name:var(--font-display)] text-lg font-semibold italic text-[var(--accent-ink)] shadow-lg">
+                    {t.title}
+                  </span>
+                </div>
+              )}
+              <ul className="flex flex-1 flex-col justify-center gap-2.5 p-4 sm:p-6">
+                {!t.photo_url && (
+                  <li className="font-[family-name:var(--font-display)] text-2xl font-semibold italic text-[var(--accent-text)]">{t.title}</li>
+                )}
+                {t.sizes.map((size, j) => (
+                  <li key={j}>
+                    <a
+                      href={orderLink(
+                        `Olá! Quero encomendar um bolo ${t.title.toLowerCase().replace(/s$/, "")} ${size.label}${
+                          size.detail ? ` (${size.detail})` : ""
+                        } — ${formatBRL(size.price)}.`
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 transition hover:border-[var(--accent)] hover:shadow-md"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-bold uppercase tracking-wide">{size.label}</span>
+                        {size.detail && <span className="block text-xs uppercase tracking-wider text-[var(--muted)]">{size.detail}</span>}
+                      </span>
+                      <span className="shrink-0 rounded-xl bg-[#ffc72c] px-3 py-1.5 font-[family-name:var(--font-display)] text-lg font-bold text-[#3b1a10]">
+                        {formatBRL(size.price)}
+                      </span>
+                      <IconWhatsapp className="hidden h-5 w-5 shrink-0 text-[#25d366] opacity-60 transition group-hover:opacity-100 sm:block" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+      {note?.trim() && <p className="text-center text-xs text-[var(--muted)]">{note}</p>}
+    </section>
+  );
+}
+
+// Perguntas frequentes (sanfona): uma aberta por vez.
+export function FaqSection({ items, heading }: { items?: StoreFaq[]; heading: React.ReactNode }) {
+  const list = (items ?? []).filter((f) => f.question.trim());
+  const [open, setOpen] = useState<number | null>(0);
+  if (list.length === 0) return null;
+  return (
+    <section className="space-y-7">
+      <Reveal>{heading}</Reveal>
+      <div className="mx-auto max-w-3xl space-y-3">
+        {list.map((f, i) => {
+          const isOpen = open === i;
+          return (
+            <Reveal key={`${f.question}-${i}`} delay={(i % 5) * 60}>
+              <div className={`overflow-hidden rounded-3xl border bg-[var(--surface)] transition ${isOpen ? "border-[var(--accent)] shadow-lg" : "border-[var(--line)]"}`}>
+                <button
+                  onClick={() => setOpen(isOpen ? null : i)}
+                  aria-expanded={isOpen}
+                  className="flex w-full items-center gap-4 px-5 py-4 text-left"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-bold text-[var(--accent-ink)]">
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 font-semibold">{f.question}</span>
+                  <IconPlus className={`h-5 w-5 shrink-0 text-[var(--accent-text)] transition-transform duration-300 ${isOpen ? "rotate-45" : ""}`} />
+                </button>
+                <div className={`grid transition-[grid-template-rows] duration-300 ${isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                  <div className="overflow-hidden">
+                    <p className="px-5 pb-5 pl-[4.5rem] text-sm leading-relaxed text-[var(--muted)]">{f.answer}</p>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+          );
+        })}
+      </div>
     </section>
   );
 }

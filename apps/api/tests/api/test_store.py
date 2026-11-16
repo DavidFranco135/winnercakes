@@ -482,3 +482,11 @@ def test_store_flavors_and_gallery_defaults(client: TestClient):
     store_use_cases._public_cache.clear()
     s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
     assert [f["name"] for f in s["flavors"]] == ["Prestígio"] and s["gallery"] == []
+
+
+def test_store_cake_tables_and_faq_defaults(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
+    assert [t["title"] for t in s["cake_tables"]] == ["Redondos", "Quadrados"]
+    assert s["cake_tables"][0]["sizes"][1]["price"] == 165
+    assert len(s["faq"]) == 5 and "50%" in s["faq"][3]["answer"]

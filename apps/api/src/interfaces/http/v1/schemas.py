@@ -816,6 +816,64 @@ class StoreGalleryPhoto(BaseModel):
     caption: str = Field(default="", max_length=120)
 
 
+class StoreFaq(BaseModel):
+    question: str = Field(min_length=1, max_length=200)
+    answer: str = Field(default="", max_length=600)
+
+
+class StoreCakeSize(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    detail: str = Field(default="", max_length=80)
+    price: float = Field(default=0, ge=0, le=100_000)
+
+
+class StoreCakeTable(BaseModel):
+    """Tabela de preços (ex.: bolos redondos P/M/G)."""
+
+    title: str = Field(min_length=1, max_length=80)
+    photo_url: str = Field(default="", max_length=2000)
+    sizes: list[StoreCakeSize] = Field(default_factory=list, max_length=12)
+
+
+_DEFAULT_FAQ = [
+    (
+        "Como é feita a entrega?",
+        "Nossas entregas são feitas por Uber Flash. "
+        "O cliente é o responsável por solicitar o carro.",
+    ),
+    ("Como os bolos são entregues?", "Os bolos do anúncio são entregues no acetato."),
+    ("Posso trocar os sabores?", "Os sabores anunciados não podem ser alterados."),
+    (
+        "Como confirmo a minha encomenda?",
+        "Para confirmar a encomenda é necessário um sinal de 50%. "
+        "O restante pode ser pago no dia da entrega.",
+    ),
+    (
+        "E os bolos personalizados?",
+        "Para bolos personalizados, os valores são diferentes. Fale com a gente!",
+    ),
+]
+_DEFAULT_CAKE_TABLES = [
+    {
+        "title": "Redondos",
+        "photo_url": "/brand/bolos/redondo.jpg",
+        "sizes": [
+            {"label": "Tamanho P – 15 cm", "detail": "até 12 fatias", "price": 99},
+            {"label": "Tamanho M – 20 cm", "detail": "até 24 fatias", "price": 165},
+            {"label": "Tamanho G – 25 cm", "detail": "até 38 fatias", "price": 231},
+        ],
+    },
+    {
+        "title": "Quadrados",
+        "photo_url": "/brand/bolos/quadrado.jpg",
+        "sizes": [
+            {"label": "Tamanho P – 15 cm", "detail": "até 18 fatias", "price": 121},
+            {"label": "Tamanho M – 20 cm", "detail": "até 32 fatias", "price": 187},
+            {"label": "Tamanho G – 25 cm", "detail": "até 50 fatias", "price": 264},
+        ],
+    },
+]
+
 _DEFAULT_FLAVORS = [
     ("Chocolatuda", "/brand/sabores/chocolatuda.jpg"),
     ("Maracujá com chocolate", "/brand/sabores/maracuja-com-chocolate.jpg"),
@@ -838,11 +896,15 @@ _DEFAULT_FLAVORS = [
     ("Ferrero Rocher", "/brand/sabores/ferrero-rocher.jpg"),
 ]
 _DEFAULT_GALLERY = [
+    ("/brand/galeria/bolo-red-velvet.jpg", "Red velvet com morangos"),
     ("/brand/galeria/bolo-lacos.jpg", "Bolo com laços e docinhos"),
     ("/brand/galeria/bolo-capivara.jpg", "Bolo temático de aniversário"),
     ("/brand/galeria/bolo-chantilly.jpg", "Bolo de chantilly com gotas de chocolate"),
     ("/brand/galeria/docinhos.jpg", "Docinhos para festa"),
     ("/brand/galeria/winner-docinhos.jpg", "Encomenda de docinhos pronta"),
+    ("/brand/galeria/bolo-kitkat.jpg", "Bolo de KitKat personalizado"),
+    ("/brand/galeria/bolo-borboletas.jpg", "Bolo de borboletas"),
+    ("/brand/galeria/bolo-minecraft.jpg", "Bolo temático infantil"),
 ]
 
 
@@ -1001,6 +1063,20 @@ class StoreSettings(BaseModel):
         max_length=60,
     )
     flavors_title: str = Field(default="Sabores das fatias", max_length=80)
+    # Tabela de bolos (tamanhos e preços) e perguntas frequentes.
+    cake_tables: list[StoreCakeTable] = Field(
+        default_factory=lambda: [StoreCakeTable(**t) for t in _DEFAULT_CAKE_TABLES], max_length=6
+    )
+    cake_table_note: str = Field(
+        default=(
+            "Rendimento aproximado: pode variar conforme a altura do bolo e o tamanho das fatias."
+        ),
+        max_length=300,
+    )
+    faq: list[StoreFaq] = Field(
+        default_factory=lambda: [StoreFaq(question=q, answer=a) for q, a in _DEFAULT_FAQ],
+        max_length=30,
+    )
     gallery: list[StoreGalleryPhoto] = Field(
         default_factory=lambda: [StoreGalleryPhoto(url=u, caption=c) for u, c in _DEFAULT_GALLERY],
         max_length=30,
@@ -1163,6 +1239,9 @@ class PublicStoreSettings(BaseModel):
     flavors: list[StoreFlavor] = Field(default_factory=list)
     flavors_title: str = ""
     gallery: list[StoreGalleryPhoto] = Field(default_factory=list)
+    cake_tables: list[StoreCakeTable] = Field(default_factory=list)
+    cake_table_note: str = ""
+    faq: list[StoreFaq] = Field(default_factory=list)
 
 
 class PublicStoreResponse(BaseModel):

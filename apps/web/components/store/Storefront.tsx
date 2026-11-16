@@ -15,7 +15,7 @@ import { SearchOverlay } from "./SearchOverlay";
 import { useStoreFx } from "./fx";
 import { HeroSlider } from "./HeroSlider";
 import { FestivalsSection, nextFestivalNotice } from "./Festivals";
-import { FlavorsSection, GallerySection } from "./Showcase";
+import { CakeTablesSection, FaqSection, FlavorsSection, GallerySection } from "./Showcase";
 import { SplashIntro } from "./SplashIntro";
 import { DesktopNav, MenuButton, MobileMenu, type NavCategory } from "./StoreNav";
 import { ProductCard } from "./ProductCard";
@@ -809,6 +809,13 @@ export function Storefront({ slug }: { slug: string }) {
                   }
                 />
 
+                <CakeTablesSection
+                  tables={settings.cake_tables}
+                  note={settings.cake_table_note}
+                  orderLink={(text) => whatsappLink(settings.whatsapp, text)}
+                  heading={<SectionTitle eyebrow="Encomendas" title={<>Tabela de <Em>bolos</Em></>} />}
+                />
+
                 {/* Sem barra de busca nem selos aqui: a lupa fica no topo e os selos no rodapé. */}
 
                 {featuredProducts.length > 0 && (
@@ -930,6 +937,11 @@ export function Storefront({ slug }: { slug: string }) {
               <GallerySection
                 photos={settings.gallery}
                 heading={<SectionTitle eyebrow="Encomendas e festas" title={<>Nossas <Em>criações</Em></>} />}
+              />
+
+              <FaqSection
+                items={settings.faq}
+                heading={<SectionTitle eyebrow="Para pedir com tranquilidade" title={<>Dúvidas <Em>frequentes</Em></>} />}
               />
 
               {settings.about && (
@@ -1140,6 +1152,12 @@ export function Storefront({ slug }: { slug: string }) {
           {tab === 2 && (
             <section className="space-y-12">
               <SectionTitle eyebrow="Passo a passo" title={<>Como fazer seu <Em>pedido</Em></>} />
+              <CakeTablesSection
+                tables={settings.cake_tables}
+                note={settings.cake_table_note}
+                orderLink={(text) => whatsappLink(settings.whatsapp, text)}
+                heading={<p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--accent-text)]">Tabela de bolos</p>}
+              />
               <div className="grid gap-5 sm:grid-cols-2">
                 {steps.map((step, i) => (
                   <Reveal key={step.title} delay={i * 100}>
@@ -1158,6 +1176,10 @@ export function Storefront({ slug }: { slug: string }) {
                   </Reveal>
                 ))}
               </div>
+              <FaqSection
+                items={settings.faq}
+                heading={<p className="text-center text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--accent-text)]">Dúvidas frequentes</p>}
+              />
               <div className="flex justify-center">
                 <button
                   onClick={() => goTab(1)}

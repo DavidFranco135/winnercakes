@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { apiFetch, ApiError, uploadImage } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/format";
 import type { Product } from "@/lib/types";
-import type { StoreAdminResponse, StoreFestival, StoreFlavor, StoreGalleryPhoto, StoreLocation, StoreSettings } from "@/lib/store";
+import type { StoreAdminResponse, StoreCakeTable, StoreFaq, StoreFestival, StoreFlavor, StoreGalleryPhoto, StoreLocation, StoreSettings } from "@/lib/store";
 import {
   ACCENTS,
   THEME_OPTIONS,
@@ -656,6 +656,20 @@ export default function LojaAdminPage() {
                 upload={uploadOne}
                 busy={isUploading}
               />
+            </Card>
+
+            <Card title="Tabela de bolos" hint="Formatos (Redondos, Quadrados…) com tamanhos, rendimento e preço. Na loja, cada tamanho abre o WhatsApp já com o pedido escrito.">
+              <CakeTablesEditor
+                tables={settings.cake_tables ?? []}
+                note={settings.cake_table_note ?? ""}
+                onChange={(patch) => update(patch)}
+                upload={uploadOne}
+                busy={isUploading}
+              />
+            </Card>
+
+            <Card title="Dúvidas frequentes" hint="Perguntas e respostas na página inicial e em “Como pedir” (entrega, sinal, sabores…).">
+              <FaqEditor faq={settings.faq ?? []} onChange={(faq) => update({ faq })} />
             </Card>
 
             <Card title="Galeria de fotos" hint="Fotos de encomendas, festas e festivais, na seção “Nossas criações”. No celular passam de lado; no computador formam um mosaico.">
@@ -2042,6 +2056,110 @@ function GalleryEditor({
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+
+// ---- Tabela de bolos ----------------------------------------------------------
+function CakeTablesEditor({
+  tables,
+  note,
+  onChange,
+  upload,
+  busy,
+}: {
+  tables: StoreCakeTable[];
+  note: string;
+  onChange: (patch: Partial<StoreSettings>) => void;
+  upload: (file: File) => Promise<string | null>;
+  busy: boolean;
+}) {
+  const set = (list: StoreCakeTable[]) => onChange({ cake_tables: list });
+  const editTable = (i: number, patch: Partial<StoreCakeTable>) => set(tables.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  return (
+    <div className="space-y-4">
+      {tables.map((t, i) => (
+        <div key={i} className="space-y-2 rounded-lg border border-neutral-800 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {t.photo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={t.photo_url} alt="" className="h-14 w-14 rounded object-cover" />
+            ) : null}
+            <input className={`${input} max-w-xs`} value={t.title} maxLength={80} placeholder="Formato (ex: Redondos)" onChange={(e) => editTable(i, { title: e.target.value })} />
+            <label className="cursor-pointer rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-neutral-500">
+              {t.photo_url ? "Trocar foto" : "Foto"}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={busy}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  const url = await upload(file);
+                  if (url) editTable(i, { photo_url: url });
+                }}
+              />
+            </label>
+            <button onClick={() => set(tables.filter((_, j) => j !== i))} className="ml-auto rounded border border-red-900 px-3 py-1 text-xs text-red-400 hover:bg-red-950">
+              Apagar formato
+            </button>
+          </div>
+          {t.sizes.map((size, k) => (
+            <div key={k} className="grid grid-cols-[1fr_1fr_100px_auto] gap-2">
+              <input className={input} value={size.label} maxLength={80} placeholder="Tamanho P – 15 cm" onChange={(e) => editTable(i, { sizes: t.sizes.map((x, q) => (q === k ? { ...x, label: e.target.value } : x)) })} />
+              <input className={input} value={size.detail ?? ""} maxLength={80} placeholder="até 12 fatias" onChange={(e) => editTable(i, { sizes: t.sizes.map((x, q) => (q === k ? { ...x, detail: e.target.value } : x)) })} />
+              <input className={input} type="number" step="0.01" min={0} value={size.price || ""} placeholder="R$" onChange={(e) => editTable(i, { sizes: t.sizes.map((x, q) => (q === k ? { ...x, price: Number(e.target.value) || 0 } : x)) })} />
+              <button onClick={() => editTable(i, { sizes: t.sizes.filter((_, q) => q !== k) })} className="rounded border border-red-900 px-2 text-xs text-red-400 hover:bg-red-950">×</button>
+            </div>
+          ))}
+          <button onClick={() => editTable(i, { sizes: [...t.sizes, { label: "", detail: "", price: 0 }] })} className="text-sm text-blue-400 hover:underline">
+            + Adicionar tamanho
+          </button>
+        </div>
+      ))}
+      {tables.length < 6 && (
+        <button onClick={() => set([...tables, { title: "", photo_url: "", sizes: [{ label: "", detail: "", price: 0 }] }])} className="text-sm text-blue-400 hover:underline">
+          + Adicionar formato
+        </button>
+      )}
+      <label className="block space-y-1">
+        <span className="text-xs text-neutral-500">Observação embaixo da tabela</span>
+        <input className={input} value={note} maxLength={300} onChange={(e) => onChange({ cake_table_note: e.target.value })} />
+      </label>
+    </div>
+  );
+}
+
+// ---- Dúvidas frequentes -----------------------------------------------------
+function FaqEditor({ faq, onChange }: { faq: StoreFaq[]; onChange: (list: StoreFaq[]) => void }) {
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= faq.length) return;
+    const next = [...faq];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="space-y-3">
+      {faq.map((f, i) => (
+        <div key={i} className="space-y-2 rounded-lg border border-neutral-800 p-3">
+          <div className="flex gap-2">
+            <input className={input} value={f.question} maxLength={200} placeholder="Pergunta" onChange={(e) => onChange(faq.map((x, j) => (j === i ? { ...x, question: e.target.value } : x)))} />
+            <button onClick={() => move(i, -1)} disabled={i === 0} className="rounded border border-neutral-700 px-2 text-xs disabled:opacity-30">↑</button>
+            <button onClick={() => move(i, 1)} disabled={i === faq.length - 1} className="rounded border border-neutral-700 px-2 text-xs disabled:opacity-30">↓</button>
+            <button onClick={() => onChange(faq.filter((_, j) => j !== i))} className="rounded border border-red-900 px-2 text-xs text-red-400 hover:bg-red-950">×</button>
+          </div>
+          <textarea className={input} rows={2} value={f.answer} maxLength={600} placeholder="Resposta" onChange={(e) => onChange(faq.map((x, j) => (j === i ? { ...x, answer: e.target.value } : x)))} />
+        </div>
+      ))}
+      {faq.length < 30 && (
+        <button onClick={() => onChange([...faq, { question: "", answer: "" }])} className="text-sm text-blue-400 hover:underline">
+          + Adicionar pergunta
+        </button>
+      )}
     </div>
   );
 }

@@ -235,6 +235,9 @@ def get_public_store(db: Session, *, slug: str) -> PublicStoreResponse:
             flavors=settings.flavors,
             flavors_title=settings.flavors_title,
             gallery=settings.gallery,
+            cake_tables=settings.cake_tables,
+            cake_table_note=settings.cake_table_note,
+            faq=settings.faq,
         ),
         products=products,
     )

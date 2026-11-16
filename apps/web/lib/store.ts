@@ -18,6 +18,9 @@ export type StoreFestival = { date: string; place: string; time?: string; note?:
 export type StoreLocation = { name: string; address?: string; schedule?: string; maps_url?: string };
 export type StoreFlavor = { name: string; photo_url?: string };
 export type StoreGalleryPhoto = { url: string; caption?: string };
+export type StoreFaq = { question: string; answer: string };
+export type StoreCakeSize = { label: string; detail?: string; price: number };
+export type StoreCakeTable = { title: string; photo_url?: string; sizes: StoreCakeSize[] };
 // cover_url: foto principal da categoria na vitrine ("" = automática).
 // cover_x / cover_y: enquadramento da foto principal (0-100, 50 = centro).
 export type StoreCategory = {
@@ -105,6 +108,10 @@ export type StoreSettings = {
   flavors?: StoreFlavor[];
   flavors_title?: string;
   gallery?: StoreGalleryPhoto[];
+  // Tabela de bolos (tamanhos e preços) e perguntas frequentes.
+  cake_tables?: StoreCakeTable[];
+  cake_table_note?: string;
+  faq?: StoreFaq[];
 };
 
 export type StoreAdminResponse = { slug: string; name: string; settings: StoreSettings };
