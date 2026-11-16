@@ -748,6 +748,43 @@ class StoreLocation(BaseModel):
     maps_url: str = Field(default="", max_length=600)
 
 
+# Loja recém-criada já abre pronta: capa do Festival de Fatias, os dois locais
+# e o calendário de novembro/dezembro postado no Instagram da Winner Cakes.
+_DEFAULT_SLIDE = {
+    "url": "/brand/slide-festival.jpg",
+    "title": "",
+    "subtitle": "",
+    "mobile_url": "/brand/slide-festival-celular.jpg",
+}
+_DEFAULT_LOCATIONS = [
+    {
+        "name": "Festival Bay Market - NIT",
+        "address": "Niterói",
+        "maps_url": "https://maps.app.goo.gl/xB4gRjvGaTRma4xK6",
+    },
+    {
+        "name": "Festival Nova Cidade - SG",
+        "address": "São Gonçalo",
+        "maps_url": "https://maps.app.goo.gl/zXGEMu8X6GUfnawV6",
+    },
+]
+_DEFAULT_FESTIVALS = [
+    {"date": d, "place": "Festival Bay Market - NIT", "time": "a partir das 13h"}
+    for d in (
+        "2026-11-13", "2026-11-16", "2026-11-18", "2026-11-25", "2026-11-27",
+        "2026-12-02", "2026-12-04", "2026-12-09", "2026-12-11",
+        "2026-12-16", "2026-12-18", "2026-12-21", "2026-12-23",
+    )
+] + [
+    {
+        "date": "2026-12-05",
+        "place": "Festival Nova Cidade - SG",
+        "time": "a partir das 13h",
+        "note": "Exclusivo Nova Cidade",
+    }
+]
+
+
 class CartTier(BaseModel):
     """Desconto progressivo: `percent`% no pedido a partir de `min_total` reais."""
 
@@ -786,16 +823,20 @@ class StoreSettings(BaseModel):
     """
 
     display_name: str = Field(default="", max_length=120)
-    logo_url: str = Field(default="", max_length=2000)
-    tagline: str = Field(default="", max_length=200)
+    logo_url: str = Field(default="/brand/winner-logo.png", max_length=2000)
+    tagline: str = Field(
+        default="Confeitaria artesanal | Toda semana tem Festival de Fatias", max_length=200
+    )
     about: str = Field(default="", max_length=2000)
-    whatsapp: str = Field(default="5521984986236", max_length=20)
+    whatsapp: str = Field(default="5521980117688", max_length=20)
     instagram: str = Field(default="winnercakes", max_length=120)
     hours: str = Field(default="", max_length=300)
     address: str = Field(default="", max_length=300)
-    accent: str = Field(default="cafe", max_length=20)
+    accent: str = Field(default="vermelho", max_length=20)
     theme: str = Field(default="winner", pattern="^(light|dark|winner)$")
-    slides: list[StoreSlide] = Field(default_factory=list, max_length=10)
+    slides: list[StoreSlide] = Field(
+        default_factory=lambda: [StoreSlide(**_DEFAULT_SLIDE)], max_length=10
+    )
     highlights: list[StoreHighlight] = Field(default_factory=list, max_length=3)
     # Links de Reels/posts do Instagram mostrados na vitrine (vídeos incorporados).
     reels: list[str] = Field(default_factory=list, max_length=12)
@@ -879,8 +920,12 @@ class StoreSettings(BaseModel):
     installments_max: int = Field(default=0, ge=0, le=24)
     installments_min: float = Field(default=0, ge=0, le=100_000)
     # Calendário dos Festivais de Fatias e os locais onde a loja está.
-    festivals: list[StoreFestival] = Field(default_factory=list, max_length=120)
-    locations: list[StoreLocation] = Field(default_factory=list, max_length=20)
+    festivals: list[StoreFestival] = Field(
+        default_factory=lambda: [StoreFestival(**f) for f in _DEFAULT_FESTIVALS], max_length=120
+    )
+    locations: list[StoreLocation] = Field(
+        default_factory=lambda: [StoreLocation(**loc) for loc in _DEFAULT_LOCATIONS], max_length=20
+    )
 
     @field_validator("product_discounts")
     @classmethod

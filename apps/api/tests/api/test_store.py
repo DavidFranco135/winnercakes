@@ -32,7 +32,7 @@ def test_store_settings_default_and_save(client: TestClient):
 
     response = client.get(f"/api/v1/organizations/{org_id}/store", headers=headers)
     assert response.status_code == 200
-    assert response.json()["settings"]["whatsapp"] == "5521984986236"
+    assert response.json()["settings"]["whatsapp"] == "5521980117688"
 
     payload = {
         "display_name": "Atelie 3D Premium",
