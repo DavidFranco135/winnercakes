@@ -231,6 +231,10 @@ def get_public_store(db: Session, *, slug: str) -> PublicStoreResponse:
                 key=lambda f: (f.date, f.time),
             ),
             locations=settings.locations,
+            festival_note=settings.festival_note,
+            flavors=settings.flavors,
+            flavors_title=settings.flavors_title,
+            gallery=settings.gallery,
         ),
         products=products,
     )

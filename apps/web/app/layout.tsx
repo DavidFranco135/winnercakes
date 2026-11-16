@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   openGraph: {
     title: "Winner Cakes",
-    description: "Cada peça moldada com propósito.",
+    description: "Confeitaria artesanal — bolos, fatias e doces.",
     images: [{ url: "/brand/winner-og.jpg", width: 1200, height: 630 }],
   },
   icons: {

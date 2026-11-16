@@ -9,10 +9,9 @@ import type { InventoryItem } from "@/lib/types";
 import { AppShell } from "@/components/AppShell";
 
 const CATEGORY_LABELS: Record<string, string> = {
-  argila: "Argila",
-  esmalte: "Esmalte",
-  pigmento: "Pigmento / engobe",
+  ingrediente: "Ingrediente",
   embalagem: "Embalagem",
+  decoracao: "Decoração (topos, velas, fitas)",
   ferramenta: "Ferramenta",
   outro: "Outro",
 };
@@ -38,7 +37,7 @@ export default function EstoquePage() {
   const [movementItemId, setMovementItemId] = useState<string | null>(null);
 
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("argila");
+  const [category, setCategory] = useState("ingrediente");
   const [unit, setUnit] = useState("g");
   const [minimumStock, setMinimumStock] = useState("0");
   const [unitCost, setUnitCost] = useState("");
@@ -79,7 +78,7 @@ export default function EstoquePage() {
 
   function resetForm() {
     setName("");
-    setCategory("argila");
+    setCategory("ingrediente");
     setUnit("g");
     setMinimumStock("0");
     setUnitCost("");

@@ -469,3 +469,16 @@ def test_store_festivals_and_locations(client: TestClient):
     assert s["locations"][0]["name"] == "Festival Bay Market - NIT"
     bad = {"festivals": [{"date": "16/12", "place": "x"}]}
     assert client.put(url, json=bad, headers=headers).status_code == 422
+
+
+def test_store_flavors_and_gallery_defaults(client: TestClient):
+    org_id, slug, headers = _setup(client)
+    s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
+    assert len(s["flavors"]) == 19 and s["flavors"][0]["name"] == "Chocolatuda"
+    assert s["gallery"] and "13h" in s["festival_note"]
+    url = f"/api/v1/organizations/{org_id}/store"
+    payload = {"flavors": [{"name": "Prestígio"}], "gallery": [], "festival_note": ""}
+    assert client.put(url, json=payload, headers=headers).status_code == 200
+    store_use_cases._public_cache.clear()
+    s = client.get(f"/api/v1/public/stores/{slug}").json()["settings"]
+    assert [f["name"] for f in s["flavors"]] == ["Prestígio"] and s["gallery"] == []

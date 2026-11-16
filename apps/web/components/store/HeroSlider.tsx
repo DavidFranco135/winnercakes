@@ -21,8 +21,10 @@ export function HeroSlider({
   storeName,
   tagline,
   whatsappHref,
+  orderHref,
   onCatalog,
 }: {
+  orderHref?: string;
   slides: StoreSlide[];
   storeName: string;
   tagline: string;
@@ -100,7 +102,11 @@ export function HeroSlider({
         style={{ aspectRatio: String(ratio) }}
         // Capa sem texto (arte pronta, com o botão já desenhado): clicar abre o catálogo.
         onClick={() => {
-          if (!hasText) onCatalog();
+          if (hasText) return;
+          const link = (current?.link ?? "").trim();
+          if (link === "whatsapp") window.open(orderHref || whatsappHref, "_blank", "noopener,noreferrer");
+          else if (/^https?:\/\//.test(link)) window.open(link, "_blank", "noopener,noreferrer");
+          else onCatalog();
         }}
       >
       {slides.map((slide, i) => {

@@ -12,8 +12,10 @@ export function FestivalsSection({
   festivals,
   locations,
   heading,
+  note,
   max = 9,
 }: {
+  note?: string;
   festivals?: StoreFestival[];
   locations?: StoreLocation[];
   heading: React.ReactNode;
@@ -27,6 +29,11 @@ export function FestivalsSection({
   return (
     <section className="space-y-7">
       <Reveal>{heading}</Reveal>
+      {note?.trim() && (
+        <Reveal>
+          <p className="-mt-3 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">{note}</p>
+        </Reveal>
+      )}
 
       {next && (
         <Reveal>

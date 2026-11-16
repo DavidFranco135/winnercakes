@@ -26,7 +26,7 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   order: "Pedido",
   paid: "Pago",
   production: "Produção",
-  firing: "Queima",
+  firing: "No forno",
   finishing: "Acabamento",
   packaging: "Embalagem",
   delivered: "Entregue",

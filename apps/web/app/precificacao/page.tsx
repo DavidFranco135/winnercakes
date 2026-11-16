@@ -10,13 +10,16 @@ import type { CostProfile, Machine, Material, Quote } from "@/lib/types";
 import type { PricingBreakdown } from "@/lib/pricing";
 import { AppShell } from "@/components/AppShell";
 import { normalizeSearch } from "@/lib/search";
+import { ingredientUnit } from "@/lib/ingredients";
+
+type RecipeLine = { materialId: string; name: string; quantity: string; cost: string };
 
 function CostBreakdownList({ breakdown }: { breakdown: PricingBreakdown }) {
   return (
     <dl className="grid grid-cols-2 gap-y-2 text-sm">
-      <dt className="text-neutral-500">Argila + outros materiais</dt>
+      <dt className="text-neutral-500">Ingredientes + embalagens</dt>
       <dd className="text-right">{formatCurrency(breakdown.materialCost)}</dd>
-      <dt className="text-neutral-500">Perdas (trincas e quebras)</dt>
+      <dt className="text-neutral-500">Perdas (sobras e quebras)</dt>
       <dd className="text-right">{formatCurrency(breakdown.wasteCost)}</dd>
       <dt className="text-neutral-500">Luz do forno</dt>
       <dd className="text-right">{formatCurrency(breakdown.energyCost)}</dd>
@@ -43,9 +46,9 @@ type TabKey = "impressora" | "perfil" | "peca" | "resultado" | "salvas";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "impressora", label: "Forno" },
   { key: "perfil", label: "Perfil de custo" },
-  { key: "peca", label: "Peça" },
+  { key: "peca", label: "Receita" },
   { key: "resultado", label: "Resultado" },
-  { key: "salvas", label: "Peças salvas" },
+  { key: "salvas", label: "Receitas salvas" },
 ];
 
 export default function PrecificacaoPage() {
@@ -81,7 +84,7 @@ export default function PrecificacaoPage() {
   const [packagingCost, setPackagingCost] = useState("2");
   const [wastePct, setWastePct] = useState("5");
   const [feesPct, setFeesPct] = useState("0");
-  const [profitPct, setProfitPct] = useState("40");
+  const [profitPct, setProfitPct] = useState("100");
   const [taxPct, setTaxPct] = useState("0");
   const [isDefault, setIsDefault] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -89,22 +92,24 @@ export default function PrecificacaoPage() {
   // --- Peça tab: the pricing form ---
   const [printerId, setPrinterId] = useState("");
   const [pieceName, setPieceName] = useState("");
-  // Queima: o forno leva várias peças de uma vez, então o tempo de forno e a
-  // energia de cada peça são a parte dela na fornada.
-  const [printTimeHours, setPrintTimeHours] = useState(""); // horas por queima
-  const [firings, setFirings] = useState("2"); // biscoito + esmalte
+  // Forno da receita inteira; o rendimento (batchSize) divide por unidade.
+  const [printTimeHours, setPrintTimeHours] = useState(""); // horas de forno da receita
+  const [firings, setFirings] = useState("1"); // fornadas da receita
   const [batchSize, setBatchSize] = useState("1");
-  const [powerUsage, setPowerUsage] = useState("60");
+  const [powerUsage, setPowerUsage] = useState("70");
   const [weightG, setWeightG] = useState("");
   const [materialId, setMaterialId] = useState("");
   const [costPerKg, setCostPerKg] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [depreciationMode, setDepreciationMode] = useState<"hora" | "peca">("hora");
   const [depreciationValue, setDepreciationValue] = useState("");
-  const [marginPercent, setMarginPercent] = useState("40");
+  const [marginPercent, setMarginPercent] = useState("100");
   const [laborHours, setLaborHours] = useState("0");
   const [showAdvanced, setShowAdvanced] = useState(true);
-  const [extraItems, setExtraItems] = useState<{ name: string; cost: string }[]>([]);
+  // Ingredientes da receita: do cadastro (custo calculado pela quantidade) ou
+  // avulsos (custo digitado). Custos da RECEITA INTEIRA; o sistema divide
+  // pelo rendimento para chegar ao custo de cada fatia/unidade.
+  const [recipe, setRecipe] = useState<RecipeLine[]>([]);
 
   const [selectedQuoteIds, setSelectedQuoteIds] = useState<string[]>([]);
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
@@ -169,16 +174,25 @@ export default function PrecificacaoPage() {
     }
   }
 
-  function addExtraItem() {
-    setExtraItems((items) => [...items, { name: "", cost: "" }]);
+  function addRecipeLine(fromList: boolean) {
+    setRecipe((items) => [...items, { materialId: fromList ? materials[0]?.id ?? "" : "", name: "", quantity: "", cost: "" }]);
   }
 
-  function updateExtraItem(index: number, patch: Partial<{ name: string; cost: string }>) {
-    setExtraItems((items) => items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  function updateRecipeLine(index: number, patch: Partial<RecipeLine>) {
+    setRecipe((items) => items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   }
 
-  function removeExtraItem(index: number) {
-    setExtraItems((items) => items.filter((_, i) => i !== index));
+  function removeRecipeLine(index: number) {
+    setRecipe((items) => items.filter((_, i) => i !== index));
+  }
+
+  // Custo de uma linha da receita (receita inteira).
+  function lineCost(line: RecipeLine): number {
+    if (!line.materialId) return Number(line.cost) || 0;
+    const m = materials.find((x) => x.id === line.materialId);
+    if (!m || m.cost_per_kg == null) return 0;
+    const q = Number(line.quantity) || 0;
+    return ingredientUnit(m) === "un" ? q * m.cost_per_kg : (q / 1000) * m.cost_per_kg;
   }
 
   async function handleCreatePrinter(event: React.FormEvent) {
@@ -217,7 +231,7 @@ export default function PrecificacaoPage() {
     setPackagingCost("2");
     setWastePct("5");
     setFeesPct("0");
-    setProfitPct("40");
+    setProfitPct("100");
     setTaxPct("0");
     setIsDefault(false);
     setEditingProfileId(null);
@@ -290,14 +304,15 @@ export default function PrecificacaoPage() {
   const firingsNum = Math.max(1, Math.round(Number(firings || 1)));
   const batchSizeNum = Math.max(1, Math.round(Number(batchSize || 1)));
   const powerUsageNum = Math.min(100, Math.max(0, Number(powerUsage || 0)));
-  // Horas de forno que cabem a uma peça.
+  // Horas de forno que cabem a cada fatia/unidade (forno da receita ÷ rendimento).
   const printTimeHoursNum = (hoursPerFiringNum * firingsNum) / batchSizeNum;
   const weightGNum = Number(weightG || 0);
   const costPerKgNum = Number(costPerKg || 0);
   const quantityNum = Math.max(1, Number(quantity || 1));
   const depreciationValueNum = Number(depreciationValue || 0);
   const marginPercentNum = Number(marginPercent || 0);
-  const laborHoursNum = Number(laborHours || 0);
+  // Tempo de preparo é da receita inteira; por unidade = ÷ rendimento.
+  const laborHoursNum = Number(laborHours || 0) / batchSizeNum;
 
   const machineCostPerHourEffective =
     depreciationMode === "hora"
@@ -311,8 +326,9 @@ export default function PrecificacaoPage() {
       ? (selectedPrinter.power_watts / 1000) * printTimeHoursNum * (powerUsageNum / 100)
       : 0;
 
-  const extraItemsCost = extraItems.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-  const materialCost = (weightGNum / 1000) * costPerKgNum + extraItemsCost;
+  const recipeCost = recipe.reduce((sum, line) => sum + lineCost(line), 0);
+  // Custo dos ingredientes por fatia/unidade.
+  const materialCost = recipeCost / batchSizeNum + (weightGNum / 1000) * costPerKgNum;
 
   const breakdown = defaultCostProfile
     ? calculatePricing(
@@ -342,18 +358,18 @@ export default function PrecificacaoPage() {
     setPrinterId("");
     setPieceName("");
     setPrintTimeHours("");
-    setFirings("2");
+    setFirings("1");
     setBatchSize("1");
-    setPowerUsage("60");
+    setPowerUsage("70");
     setWeightG("");
     setMaterialId("");
     setCostPerKg("");
     setQuantity("1");
     setDepreciationMode("hora");
     setDepreciationValue("");
-    setMarginPercent("40");
+    setMarginPercent("100");
     setLaborHours("0");
-    setExtraItems([]);
+    setRecipe([]);
     setEditFinalPrice("");
   }
 
@@ -379,7 +395,18 @@ export default function PrecificacaoPage() {
       profit_margin_percentage: marginPercentNum,
       material_id: materialId || null,
       cost_per_kg: costPerKgNum || null,
-      extra_items: extraItems.map((item) => ({ name: item.name, cost: Number(item.cost) || 0 })),
+      // Cada ingrediente vai com o custo POR UNIDADE (÷ rendimento) e a
+      // quantidade da receita inteira, para reabrir e recalcular depois.
+      extra_items: recipe.map((line) => {
+        const m = line.materialId ? materials.find((x) => x.id === line.materialId) : undefined;
+        return {
+          name: m ? m.name : line.name,
+          cost: Number((lineCost(line) / batchSizeNum).toFixed(4)),
+          material_id: m ? m.id : null,
+          quantity: m ? Number(line.quantity) || 0 : null,
+          unit: m ? ingredientUnit(m) : null,
+        };
+      }),
       depreciation_mode: depreciationMode,
       depreciation_value: depreciationValueNum || null,
       firing: {
@@ -404,8 +431,8 @@ export default function PrecificacaoPage() {
         const synced = await syncProductPrice(previousName, updated.final_price ?? updated.suggested_price);
         setMessage(
           synced > 0
-            ? `Peça atualizada — preço atualizado também em ${synced} produto(s).`
-            : "Peça atualizada."
+            ? `Receita atualizada — preço atualizado também em ${synced} produto(s).`
+            : "Receita atualizada."
         );
         resetPecaForm();
         await load();
@@ -417,7 +444,7 @@ export default function PrecificacaoPage() {
           body: JSON.stringify(body),
         });
 
-        let productMessage = "Peça salva na lista.";
+        let productMessage = "Receita salva na lista.";
         try {
           await apiFetch(`${orgPath}/products`, {
             method: "POST",
@@ -431,15 +458,15 @@ export default function PrecificacaoPage() {
               // obra, depreciação e margem da peça). Sem isso o produto era
               // recalculado só com a receita e saía bem mais barato.
               manual_price: Number((saved.final_price ?? saved.suggested_price).toFixed(2)),
-              materials: materialId ? [{ material_id: materialId, quantity_g: weightGNum }] : [],
+              materials: [],
               // Não vai sozinho para a loja pública: você publica em Minha Loja.
               publish_in_store: false,
             }),
           });
           productMessage =
-            "Peça salva na lista e adicionada aos Produtos (oculta na loja). Para publicar, use Minha Loja → Produtos na loja → Mostrar.";
+            "Receita salva na lista e adicionada aos Produtos (oculta na loja). Para publicar, use Minha Loja → Produtos na loja → Mostrar.";
         } catch {
-          productMessage = "Peça salva na lista, mas falhou ao adicionar aos Produtos — adicione manualmente na aba Produtos se precisar.";
+          productMessage = "Receita salva na lista, mas falhou ao adicionar aos Produtos — adicione manualmente na aba Produtos se precisar.";
         }
 
         setMessage(productMessage);
@@ -448,7 +475,7 @@ export default function PrecificacaoPage() {
         setActiveTab("salvas");
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Falha ao salvar a peça.");
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar a receita.");
     } finally {
       setIsSaving(false);
     }
@@ -479,9 +506,16 @@ export default function PrecificacaoPage() {
     setQuantity(String(q.quantity));
     setDepreciationMode(q.depreciation_mode ?? "hora");
     setDepreciationValue(q.depreciation_value != null ? String(q.depreciation_value) : "");
-    setMarginPercent(q.profit_margin_percentage != null ? String(q.profit_margin_percentage) : "40");
-    setLaborHours(q.labor_hours != null ? String(q.labor_hours) : "0");
-    setExtraItems((q.extra_items ?? []).map((item) => ({ name: item.name, cost: String(item.cost) })));
+    setMarginPercent(q.profit_margin_percentage != null ? String(q.profit_margin_percentage) : "100");
+    const yieldN = q.firing?.batch_size ?? 1;
+    setLaborHours(q.labor_hours != null ? String(Number((q.labor_hours * yieldN).toFixed(2))) : "0");
+    setRecipe(
+      (q.extra_items ?? []).map((item) =>
+        item.material_id && materials.some((m) => m.id === item.material_id)
+          ? { materialId: item.material_id, name: item.name, quantity: String(item.quantity ?? ""), cost: "" }
+          : { materialId: "", name: item.name, quantity: "", cost: String(Number((item.cost * yieldN).toFixed(2))) }
+      )
+    );
     setEditFinalPrice(q.final_price != null ? String(q.final_price) : "");
     setMessage(null);
     setError(null);
@@ -546,14 +580,14 @@ export default function PrecificacaoPage() {
 
   async function handleDeletePiece(q: Quote) {
     if (!accessToken) return;
-    if (!window.confirm(`Excluir a peça salva "${q.piece_name}"?`)) return;
+    if (!window.confirm(`Excluir a receita salva "${q.piece_name}"?`)) return;
     setError(null);
     try {
       await apiFetch(`${orgPath}/quotes/${q.id}`, { method: "DELETE", accessToken });
       setSelectedQuoteIds((prev) => prev.filter((id) => id !== q.id));
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Falha ao excluir peça.");
+      setError(err instanceof ApiError ? err.message : "Falha ao excluir receita.");
     }
   }
 
@@ -630,8 +664,8 @@ export default function PrecificacaoPage() {
                       <input required placeholder="Nome" value={newPrinterName} onChange={(e) => setNewPrinterName(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                       <input placeholder="Marca" value={newPrinterBrand} onChange={(e) => setNewPrinterBrand(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                       <input placeholder="Modelo" value={newPrinterModel} onChange={(e) => setNewPrinterModel(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
-                      <input type="number" step="0.01" placeholder="Desgaste por hora de uso (R$)" value={newPrinterCostPerHour} onChange={(e) => setNewPrinterCostPerHour(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
-                      <input type="number" step="1" placeholder="Potência (W) — ex.: 6000 para 6 kW" value={newPrinterPowerWatts} onChange={(e) => setNewPrinterPowerWatts(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2" />
+                      <input type="number" step="0.01" placeholder="Gás + desgaste por hora de uso (R$) — ex.: 3" value={newPrinterCostPerHour} onChange={(e) => setNewPrinterCostPerHour(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                      <input type="number" step="1" placeholder="Potência (W) — só forno elétrico, ex.: 2000" value={newPrinterPowerWatts} onChange={(e) => setNewPrinterPowerWatts(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2" />
                       <button type="submit" disabled={isSavingPrinter} className="rounded bg-blue-600 px-4 py-2 font-medium disabled:opacity-50 sm:col-span-2">
                         {isSavingPrinter ? "Salvando…" : "Salvar forno"}
                       </button>
@@ -681,8 +715,8 @@ export default function PrecificacaoPage() {
                       <input required placeholder="Nome do perfil" value={profileName} onChange={(e) => setProfileName(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 sm:col-span-2" />
                       <input type="number" step="0.01" placeholder="Energia (R$/kWh)" value={energyCost} onChange={(e) => setEnergyCost(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                       <input type="number" step="0.01" placeholder="Mão de obra (R$/h)" value={laborCost} onChange={(e) => setLaborCost(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
-                      <input type="number" step="0.01" placeholder="Embalagem fixa (R$)" value={packagingCost} onChange={(e) => setPackagingCost(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
-                      <input type="number" step="0.01" placeholder="Perdas: trincas e quebras (%)" value={wastePct} onChange={(e) => setWastePct(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                      <input type="number" step="0.01" placeholder="Embalagem por unidade (R$)" value={packagingCost} onChange={(e) => setPackagingCost(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                      <input type="number" step="0.01" placeholder="Perdas: sobras e quebras (%)" value={wastePct} onChange={(e) => setWastePct(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                       <input type="number" step="0.01" placeholder="Taxas (%)" value={feesPct} onChange={(e) => setFeesPct(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                       <input type="number" step="0.01" placeholder="Margem de lucro (%)" value={profitPct} onChange={(e) => setProfitPct(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                       <input type="number" step="0.01" placeholder="Imposto (%)" value={taxPct} onChange={(e) => setTaxPct(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
@@ -728,7 +762,7 @@ export default function PrecificacaoPage() {
                 <div className="space-y-4">
                   {editingQuoteId && (
                     <div className="flex items-center justify-between rounded-lg border border-blue-800 bg-blue-950/40 px-4 py-3 text-sm text-blue-300">
-                      <span>Editando peça salva — ajuste o que quiser e salve.</span>
+                      <span>Editando receita salva — ajuste o que quiser e salve.</span>
                       <button type="button" onClick={cancelEditPiece} className="text-xs underline">
                         Cancelar edição
                       </button>
@@ -763,124 +797,154 @@ export default function PrecificacaoPage() {
                       </div>
 
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-xs text-neutral-500">Nome da peça</label>
+                        <label className="mb-1 block text-xs text-neutral-500">Nome da receita / produto</label>
                         <input
-                          placeholder='Ex: "Xícara de café 180 ml"'
+                          placeholder='Ex: "Fatia Red Velvet" ou "Bolo de aniversário 2 kg"'
                           value={pieceName}
                           onChange={(e) => setPieceName(e.target.value)}
                           className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
                         />
                       </div>
 
-                      <div className="space-y-3 rounded-lg border border-neutral-800 p-3 sm:col-span-2">
-                        <p className="text-xs font-medium text-neutral-300">Queima no forno</p>
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                          <div>
-                            <label className="mb-1 block text-xs text-neutral-500">Horas por queima</label>
-                            <input type="number" step="0.5" min={0} placeholder="Ex: 8" value={printTimeHours} onChange={(e) => setPrintTimeHours(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-neutral-500">Nº de queimas</label>
-                            <input type="number" step="1" min={1} value={firings} onChange={(e) => setFirings(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-neutral-500">Peças por fornada</label>
-                            <input type="number" step="1" min={1} value={batchSize} onChange={(e) => setBatchSize(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-neutral-500">Uso da potência (%)</label>
-                            <input type="number" step="5" min={0} max={100} value={powerUsage} onChange={(e) => setPowerUsage(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
-                          </div>
-                        </div>
-                        <p className="text-xs text-neutral-500">
-                          Normalmente são 2 queimas (biscoito e esmalte). O forno liga e desliga para seguir a curva, por isso
-                          não usa a potência cheia o tempo todo. Parte desta peça na fornada:{" "}
-                          <span className="text-neutral-300">
-                            {printTimeHoursNum.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} h de forno
-                            {selectedPrinter?.power_watts != null
-                              ? ` · ${energyKwh.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kWh de luz`
-                              : ""}
-                          </span>
-                        </p>
+                      <div>
+                        <label className="mb-1 block text-xs text-neutral-500">Rendimento da receita (fatias / unidades)</label>
+                        <input type="number" step="1" min={1} placeholder="Ex: 16" value={batchSize} onChange={(e) => setBatchSize(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-neutral-500">Quantidade de peças do pedido</label>
+                        <label className="mb-1 block text-xs text-neutral-500">Quantidade do pedido (unidades)</label>
                         <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
                       </div>
 
-                      <div>
-                        <label className="mb-1 block text-xs text-neutral-500">Peso de argila por peça (g)</label>
-                        <input type="number" step="0.1" placeholder="Ex: 350" value={weightG} onChange={(e) => setWeightG(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-neutral-500">Argila</label>
-                        <select value={materialId} onChange={(e) => handlePickMaterial(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm">
-                          <option value="">Informar custo/kg manualmente</option>
-                          {materials.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="mb-1 block text-xs text-neutral-500">Custo da argila por kg (R$)</label>
-                        <input type="number" step="0.01" value={costPerKg} onChange={(e) => setCostPerKg(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
-                      </div>
-
-                      <div className="sm:col-span-2 space-y-2">
-                        <label className="block text-xs text-neutral-500">
-                          Outros materiais por peça (esmalte, engobe, pigmento, decalque, etc.)
-                        </label>
-                        {extraItems.map((item, index) => (
-                          <div key={index} className="flex flex-col gap-2 sm:flex-row">
-                            <input
-                              placeholder="Nome (ex: Esmalte branco)"
-                              value={item.name}
-                              onChange={(e) => updateExtraItem(index, { name: e.target.value })}
-                              className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:flex-1"
-                            />
-                            <div className="flex gap-2">
-                              <input
-                                type="number"
-                                step="0.01"
-                                placeholder="Custo (R$)"
-                                value={item.cost}
-                                onChange={(e) => updateExtraItem(index, { cost: e.target.value })}
-                                className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:w-28"
-                              />
+                      <div className="space-y-2 rounded-lg border border-neutral-800 p-3 sm:col-span-2">
+                        <p className="text-xs font-medium text-neutral-300">Ingredientes da receita inteira</p>
+                        {recipe.length === 0 && (
+                          <p className="text-xs text-neutral-500">
+                            Adicione os ingredientes com a quantidade usada na receita. Os do cadastro (aba Ingredientes)
+                            calculam o custo sozinhos; os avulsos você digita o valor (ex.: embalagem, topo de bolo).
+                          </p>
+                        )}
+                        {recipe.map((line, index) => {
+                          const m = line.materialId ? materials.find((x) => x.id === line.materialId) : undefined;
+                          return (
+                            <div key={index} className="flex flex-col gap-2 rounded border border-neutral-800 p-2 sm:flex-row sm:items-center">
+                              {line.materialId ? (
+                                <>
+                                  <select
+                                    value={line.materialId}
+                                    onChange={(e) => updateRecipeLine(index, { materialId: e.target.value })}
+                                    className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:flex-1"
+                                  >
+                                    {materials.map((mm) => (
+                                      <option key={mm.id} value={mm.id}>{mm.name}</option>
+                                    ))}
+                                  </select>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min={0}
+                                      placeholder="Qtd."
+                                      value={line.quantity}
+                                      onChange={(e) => updateRecipeLine(index, { quantity: e.target.value })}
+                                      className="w-24 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                                    />
+                                    <span className="w-6 text-xs text-neutral-500">{m ? ingredientUnit(m) : ""}</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <input
+                                    placeholder="Nome (ex: Caixa para fatia)"
+                                    value={line.name}
+                                    onChange={(e) => updateRecipeLine(index, { name: e.target.value })}
+                                    className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:flex-1"
+                                  />
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder="Custo (R$)"
+                                    value={line.cost}
+                                    onChange={(e) => updateRecipeLine(index, { cost: e.target.value })}
+                                    className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:w-28"
+                                  />
+                                </>
+                              )}
+                              <span className="shrink-0 text-right text-sm text-neutral-300 sm:w-24">{formatCurrency(lineCost(line))}</span>
                               <button
                                 type="button"
-                                onClick={() => removeExtraItem(index)}
+                                onClick={() => removeRecipeLine(index)}
                                 className="shrink-0 rounded border border-neutral-700 px-3 py-2 text-sm text-neutral-400 hover:border-red-700 hover:text-red-400"
                               >
                                 Remover
                               </button>
                             </div>
-                          </div>
-                        ))}
-                        <button type="button" onClick={addExtraItem} className="text-sm text-blue-400 hover:underline">
-                          + Adicionar item
-                        </button>
-                        {extraItemsCost > 0 && (
-                          <p className="text-xs text-neutral-500">
-                            Subtotal de itens adicionais: {formatCurrency(extraItemsCost)}
+                          );
+                        })}
+                        <div className="flex flex-wrap gap-4">
+                          <button
+                            type="button"
+                            onClick={() => addRecipeLine(true)}
+                            disabled={materials.length === 0}
+                            className="text-sm text-blue-400 hover:underline disabled:text-neutral-600 disabled:no-underline"
+                          >
+                            + Ingrediente do cadastro
+                          </button>
+                          <button type="button" onClick={() => addRecipeLine(false)} className="text-sm text-blue-400 hover:underline">
+                            + Item avulso (embalagem, decoração…)
+                          </button>
+                        </div>
+                        {materials.length === 0 && (
+                          <p className="text-xs text-yellow-300">Cadastre seus ingredientes na página Ingredientes para o custo sair sozinho.</p>
+                        )}
+                        {recipeCost > 0 && (
+                          <p className="text-xs text-neutral-400">
+                            Receita inteira: <span className="text-neutral-200">{formatCurrency(recipeCost)}</span> · por unidade (÷{batchSizeNum}):{" "}
+                            <span className="text-neutral-200">{formatCurrency(recipeCost / batchSizeNum)}</span>
                           </p>
                         )}
                       </div>
 
+                      <div className="space-y-3 rounded-lg border border-neutral-800 p-3 sm:col-span-2">
+                        <p className="text-xs font-medium text-neutral-300">Forno e preparo (da receita inteira)</p>
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                          <div>
+                            <label className="mb-1 block text-xs text-neutral-500">Tempo de forno (h)</label>
+                            <input type="number" step="0.05" min={0} placeholder="Ex: 0.75" value={printTimeHours} onChange={(e) => setPrintTimeHours(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-neutral-500">Uso da potência (%)</label>
+                            <input type="number" step="5" min={0} max={100} value={powerUsage} onChange={(e) => setPowerUsage(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-neutral-500">Tempo de preparo (h)</label>
+                            <input type="number" step="0.25" min={0} placeholder="Ex: 2" value={laborHours} onChange={(e) => setLaborHours(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
+                          </div>
+                        </div>
+                        <p className="text-xs text-neutral-500">
+                          Preparo = bater, rechear, montar e decorar (usa o valor da sua hora no Perfil de custo). Por unidade:{" "}
+                          <span className="text-neutral-300">
+                            {printTimeHoursNum.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} h de forno
+                            {selectedPrinter?.power_watts != null
+                              ? ` · ${energyKwh.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} kWh`
+                              : ""}
+                            {` · ${(laborHoursNum * 60).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} min de preparo`}
+                          </span>
+                        </p>
+                      </div>
+
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-xs text-neutral-500">Desgaste do forno (resistências, manutenção)</label>
+                        <label className="mb-1 block text-xs text-neutral-500">Forno: gás + desgaste (o valor por hora vem do forno cadastrado)</label>
                         <div className="flex gap-2">
                           <button type="button" onClick={() => setDepreciationMode("hora")} className={`flex-1 rounded border px-3 py-2 text-sm ${depreciationMode === "hora" ? "border-blue-500 bg-blue-950 text-blue-300" : "border-neutral-700 text-neutral-400"}`}>
                             Por hora
                           </button>
                           <button type="button" onClick={() => setDepreciationMode("peca")} className={`flex-1 rounded border px-3 py-2 text-sm ${depreciationMode === "peca" ? "border-blue-500 bg-blue-950 text-blue-300" : "border-neutral-700 text-neutral-400"}`}>
-                            Por peça
+                            Por unidade
                           </button>
                           <input
                             type="number"
                             step="0.01"
-                            placeholder={depreciationMode === "hora" ? "R$/hora" : "R$/peça"}
+                            placeholder={depreciationMode === "hora" ? "R$/hora" : "R$/unid."}
                             value={depreciationValue}
                             onChange={(e) => setDepreciationValue(e.target.value)}
                             className="w-28 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
@@ -895,17 +959,13 @@ export default function PrecificacaoPage() {
                     </div>
 
                     <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="text-xs text-blue-400 hover:underline">
-                      {showAdvanced ? "Ocultar avançado" : "Mão de obra e energia"}
+                      {showAdvanced ? "Ocultar luz do forno" : "Luz do forno"}
                     </button>
                     {showAdvanced && (
                       <div className="grid grid-cols-1 gap-3 border-t border-neutral-800 pt-3 sm:grid-cols-2">
                         <div>
-                          <label className="mb-1 block text-xs text-neutral-500">Luz (kWh por peça) — automático quando o forno tem potência salva</label>
+                          <label className="mb-1 block text-xs text-neutral-500">Luz (kWh por unidade) — automático quando o forno elétrico tem potência salva</label>
                           <input type="number" value={energyKwh.toFixed(3)} disabled className="w-full rounded border border-neutral-800 bg-neutral-900/50 px-3 py-2 text-sm text-neutral-500" />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-neutral-500">Mão de obra por peça (h) — modelar, tornear, acabar, esmaltar</label>
-                          <input type="number" step="0.1" value={laborHours} onChange={(e) => setLaborHours(e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
                         </div>
                       </div>
                     )}
@@ -915,7 +975,7 @@ export default function PrecificacaoPage() {
                     <div className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-xs text-neutral-500">Custo de produção (por peça)</p>
+                          <p className="text-xs text-neutral-500">Custo de produção (por unidade)</p>
                           <p className="text-xl font-semibold">{formatCurrency(breakdown.productionCost)}</p>
                         </div>
                         <div className="text-right">
@@ -924,7 +984,7 @@ export default function PrecificacaoPage() {
                         </div>
                       </div>
                       <p className="mt-2 text-xs text-neutral-500">
-                        Total para {quantityNum} peça(s): {formatCurrency(breakdown.suggestedPrice * quantityNum)}
+                        Total para {quantityNum} unidade(s): {formatCurrency(breakdown.suggestedPrice * quantityNum)}
                       </p>
 
                       <div className="mt-4 border-t border-neutral-800 pt-4">
@@ -954,7 +1014,7 @@ export default function PrecificacaoPage() {
                           disabled={!canSave || isSaving}
                           className="flex-1 rounded bg-purple-600 px-4 py-2 font-medium hover:bg-purple-500 disabled:opacity-50"
                         >
-                          {isSaving ? "Salvando…" : editingQuoteId ? "Salvar alterações" : "Salvar peça calculada"}
+                          {isSaving ? "Salvando…" : editingQuoteId ? "Salvar alterações" : "Salvar receita calculada"}
                         </button>
                         {editingQuoteId && (
                           <button
@@ -967,7 +1027,7 @@ export default function PrecificacaoPage() {
                         )}
                       </div>
                       {!pieceName.trim() && (
-                        <p className="mt-1 text-xs text-yellow-300">Dê um nome à peça para poder salvar.</p>
+                        <p className="mt-1 text-xs text-yellow-300">Dê um nome à receita para poder salvar.</p>
                       )}
                     </div>
                   )}
@@ -977,11 +1037,11 @@ export default function PrecificacaoPage() {
               {activeTab === "resultado" && (
                 <div className="space-y-3">
                   {!breakdown ? (
-                    <p className="text-sm text-neutral-500">Preencha a aba Peça primeiro.</p>
+                    <p className="text-sm text-neutral-500">Preencha a aba Receita primeiro.</p>
                   ) : (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
                       <h2 className="mb-3 text-sm font-medium text-neutral-300">
-                        {pieceName || "Peça sem nome"}
+                        {pieceName || "Receita sem nome"}
                       </h2>
                       <CostBreakdownList breakdown={breakdown} />
                     </div>
@@ -992,7 +1052,7 @@ export default function PrecificacaoPage() {
               {activeTab === "salvas" && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm text-neutral-500">{quotes.length} peça(s) salva(s)</p>
+                    <p className="text-sm text-neutral-500">{quotes.length} receita(s) salva(s)</p>
                     <button
                       onClick={() => window.print()}
                       disabled={selectedQuoteIds.length === 0}
@@ -1005,7 +1065,7 @@ export default function PrecificacaoPage() {
                   <div className="rounded-xl border border-neutral-800 divide-y divide-neutral-800">
                     {quotes.length === 0 ? (
                       <p className="px-3 py-6 text-center text-sm text-neutral-500">
-                        Nenhuma peça salva ainda — calcule uma na aba Peça.
+                        Nenhuma receita salva ainda — calcule uma na aba Receita.
                       </p>
                     ) : (
                       quotes.map((q) => (
@@ -1064,7 +1124,7 @@ export default function PrecificacaoPage() {
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b-2 border-black">
-              <th className="py-2 text-left">Peça</th>
+              <th className="py-2 text-left">Receita</th>
               <th className="py-2 text-left">Forno</th>
               <th className="py-2 text-right">Peso</th>
               <th className="py-2 text-right">Qtd.</th>

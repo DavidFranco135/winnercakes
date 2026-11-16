@@ -186,10 +186,9 @@ export type OrderItem = {
 };
 
 export const INVENTORY_CATEGORIES = [
-  "argila",
-  "esmalte",
-  "pigmento",
+  "ingrediente",
   "embalagem",
+  "decoracao",
   "ferramenta",
   "outro",
 ] as const;
@@ -269,7 +268,9 @@ export type Quote = {
   material_id: string | null;
   weight_g: number | null;
   cost_per_kg: number | null;
-  extra_items: { name: string; cost: number }[] | null;
+  extra_items:
+    | { name: string; cost: number; material_id?: string | null; quantity?: number | null; unit?: string | null }[]
+    | null;
   print_time_hours: number | null;
   depreciation_mode: "hora" | "peca" | null;
   depreciation_value: number | null;

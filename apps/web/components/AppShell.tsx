@@ -120,7 +120,7 @@ function IconStore({ className }: { className?: string }) {
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Painel", icon: IconHome },
   { href: "/produtos", label: "Produtos", icon: IconTag },
-  { href: "/catalogo", label: "Catálogo", icon: IconGrid },
+  { href: "/catalogo", label: "Cardápio", icon: IconGrid },
   { href: "/loja-admin", label: "Minha Loja", icon: IconStore },
   { href: "/pedidos", label: "Pedidos", icon: IconClipboard },
   { href: "/clientes", label: "Clientes", icon: IconUsers },
@@ -128,7 +128,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/financeiro", label: "Financeiro", icon: IconDollar },
   { href: "/precificacao", label: "Precificação", icon: IconPricing },
   { href: "/maquinas", label: "Fornos", icon: IconCpu },
-  { href: "/materiais", label: "Argilas e esmaltes", icon: IconLayers },
+  { href: "/materiais", label: "Ingredientes", icon: IconLayers },
 ];
 
 function SidebarContent({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {

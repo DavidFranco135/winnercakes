@@ -210,10 +210,10 @@ export default function PrecificacaoPublicaPage() {
           </section>
 
           <section className="space-y-3 rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
-            <h2 className="text-sm font-medium text-neutral-300">Forno e peça</h2>
+            <h2 className="text-sm font-medium text-neutral-300">Forno e receita</h2>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs text-neutral-500">Nome da peça</label>
+                <label className="mb-1 block text-xs text-neutral-500">Nome do produto</label>
                 <input placeholder='Ex: "Xícara de café 180 ml"' value={state.pieceName} onChange={(e) => set("pieceName", e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
               </div>
               <div>
@@ -225,28 +225,28 @@ export default function PrecificacaoPublicaPage() {
                 <input type="number" step="1" placeholder="Ex: 3600" value={state.printerPowerWatts} onChange={(e) => set("printerPowerWatts", e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-neutral-500">Horas de forno por peça (total das queimas ÷ peças da fornada)</label>
+                <label className="mb-1 block text-xs text-neutral-500">Horas de forno por unidade (forno da receita ÷ rendimento)</label>
                 <input type="number" step="0.01" placeholder="Ex: 0.4" value={state.printTimeHours} onChange={(e) => set("printTimeHours", e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-neutral-500">Quantidade de peças</label>
+                <label className="mb-1 block text-xs text-neutral-500">Quantidade (unidades)</label>
                 <input type="number" min={1} value={state.quantity} onChange={(e) => set("quantity", e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-neutral-500">Peso de argila por peça (g)</label>
+                <label className="mb-1 block text-xs text-neutral-500">Peso do ingrediente principal por unidade (g)</label>
                 <input type="number" step="0.1" placeholder="Ex: 350" value={state.weightG} onChange={(e) => set("weightG", e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-neutral-500">Custo da argila por kg (R$)</label>
+                <label className="mb-1 block text-xs text-neutral-500">Custo do ingrediente principal por kg (R$)</label>
                 <input type="number" step="0.01" placeholder="Ex: 12.00" value={state.costPerKg} onChange={(e) => set("costPerKg", e.target.value)} className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm" />
               </div>
 
               <div className="sm:col-span-2 space-y-2">
-                <label className="block text-xs text-neutral-500">Outros materiais por peça (esmalte, engobe, pigmento, decalque, etc.)</label>
+                <label className="block text-xs text-neutral-500">Outros ingredientes e itens por unidade (recheio, cobertura, embalagem…)</label>
                 {state.extraItems.map((item, index) => (
                   <div key={index} className="flex flex-col gap-2 sm:flex-row">
                     <input
-                      placeholder="Nome (ex: Esmalte branco)"
+                      placeholder="Nome (ex: Recheio de Ninho)"
                       value={item.name}
                       onChange={(e) => updateExtraItem(index, { name: e.target.value })}
                       className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:flex-1"
@@ -282,12 +282,12 @@ export default function PrecificacaoPublicaPage() {
                     Por hora
                   </button>
                   <button type="button" onClick={() => set("depreciationMode", "peca")} className={`flex-1 rounded border px-3 py-2 text-sm ${state.depreciationMode === "peca" ? "border-blue-500 bg-blue-950 text-blue-300" : "border-neutral-700 text-neutral-400"}`}>
-                    Por peça
+                    Por unidade
                   </button>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder={state.depreciationMode === "hora" ? "R$/hora" : "R$/peça"}
+                    placeholder={state.depreciationMode === "hora" ? "R$/hora" : "R$/unid."}
                     value={state.depreciationValue}
                     onChange={(e) => set("depreciationValue", e.target.value)}
                     className="w-28 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
@@ -309,7 +309,7 @@ export default function PrecificacaoPublicaPage() {
           <section className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs text-neutral-500">Custo de produção (por peça)</p>
+                <p className="text-xs text-neutral-500">Custo de produção (por unidade)</p>
                 <p className="text-xl font-semibold">{formatCurrency(breakdown.productionCost)}</p>
               </div>
               <div className="sm:text-right">
@@ -318,7 +318,7 @@ export default function PrecificacaoPublicaPage() {
               </div>
             </div>
             <p className="mt-2 text-xs text-neutral-500">
-              Total para {quantityNum} peça(s): {formatCurrency(breakdown.suggestedPrice * quantityNum)}
+              Total para {quantityNum} unidade(s): {formatCurrency(breakdown.suggestedPrice * quantityNum)}
             </p>
 
             <div className="mt-4 border-t border-neutral-800 pt-4">
@@ -342,9 +342,9 @@ export default function PrecificacaoPublicaPage() {
       </div>
 
       <div className="hidden print:block print:bg-white print:p-8 print:text-black">
-        <h1 className="mb-1 text-xl font-bold">{state.pieceName || "Peça sem nome"}</h1>
+        <h1 className="mb-1 text-xl font-bold">{state.pieceName || "Produto sem nome"}</h1>
         <p className="mb-4 text-sm text-neutral-700">
-          {state.printerName || "—"} · {state.weightG ? `${state.weightG}g` : "—"} · {quantityNum} peça(s)
+          {state.printerName || "—"} · {state.weightG ? `${state.weightG}g` : "—"} · {quantityNum} unidade(s)
         </p>
         <table className="w-full border-collapse text-sm">
           <tbody>
@@ -389,7 +389,7 @@ export default function PrecificacaoPublicaPage() {
               <td className="py-2 text-right">{formatCurrency(breakdown.suggestedPrice)}</td>
             </tr>
             <tr className="font-bold">
-              <td className="py-2">Total ({quantityNum} peça(s))</td>
+              <td className="py-2">Total ({quantityNum} unidade(s))</td>
               <td className="py-2 text-right">{formatCurrency(breakdown.suggestedPrice * quantityNum)}</td>
             </tr>
           </tbody>

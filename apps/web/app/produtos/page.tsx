@@ -19,10 +19,10 @@ type BomLine = { material_id: string; quantity_g: string };
 
 // Linhas da conta de preço, na ordem da fórmula (domain/calculator/engine.py).
 const CALC_ROWS: { key: keyof ProductCost; label: string }[] = [
-  { key: "material_cost", label: "Material (+ itens extras)" },
+  { key: "material_cost", label: "Ingredientes (+ itens extras)" },
   { key: "waste_cost", label: "Perdas (trincas e quebras)" },
   { key: "energy_cost", label: "Luz do forno" },
-  { key: "machine_cost", label: "Máquina / depreciação" },
+  { key: "machine_cost", label: "Forno (gás + desgaste)" },
   { key: "labor_cost", label: "Mão de obra" },
   { key: "packaging_cost", label: "Embalagem" },
   { key: "fees", label: "Taxas" },
@@ -707,7 +707,7 @@ export default function ProdutosPage() {
                       {typed.length > 0 && (
                         <div className="space-y-2">
                           <p className="text-xs text-neutral-400">
-                            Preço digitado por você diferente da peça na Precificação — confira e decida um por um:
+                            Preço digitado por você diferente da receita na Precificação — confira e decida um por um:
                           </p>
                           <ul className="divide-y divide-neutral-800 rounded border border-neutral-800">{typed.map(row)}</ul>
                         </div>
@@ -971,12 +971,12 @@ export default function ProdutosPage() {
             </div>
             {mode === "simples" ? (
               <p className="text-xs text-neutral-500">
-                Só nome e preço — sem forno, material ou perfil de custo.
+                Só nome e preço — sem forno, ingredientes ou perfil de custo.
               </p>
             ) : !bomLines.some((l) => l.material_id && Number(l.quantity_g) > 0) &&
               !(Number(printTimeHours) > 0) ? (
               <p className="text-xs text-yellow-400">
-                Sem materiais nem tempo de forno, o produto fica <strong>sem preço</strong>.{" "}
+                Sem ingredientes nem tempo de forno, o produto fica <strong>sem preço</strong>.{" "}
                 <button type="button" onClick={() => switchToManualPrice()} className="text-blue-400 hover:underline">
                   Digitar o preço (Simples)
                 </button>
@@ -1005,7 +1005,7 @@ export default function ProdutosPage() {
                 </>
               ) : (
                 <>
-                  <input type="number" step="0.01" placeholder="Horas de forno por peça" value={printTimeHours} onChange={(e) => setPrintTimeHours(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+                  <input type="number" step="0.01" placeholder="Horas de forno por unidade" value={printTimeHours} onChange={(e) => setPrintTimeHours(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
                   <select value={machineId} onChange={(e) => setMachineId(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2">
                     <option value="">Forno (opcional)</option>
                     {machines.map((m) => (
@@ -1195,7 +1195,7 @@ export default function ProdutosPage() {
             {mode === "completo" && (
               <div className="space-y-2">
                 <p className="text-xs text-neutral-500">
-                  Quanto material esse produto consome por unidade
+                  Ingredientes por unidade (em g ou ml). Para receitas completas com rendimento, use Precificação → Receita.
                 </p>
                 {bomLines.map((line, index) => (
                   <div key={index} className="flex flex-col gap-2 sm:flex-row">
@@ -1204,7 +1204,7 @@ export default function ProdutosPage() {
                       onChange={(e) => updateBomLine(index, { material_id: e.target.value })}
                       className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:flex-1"
                     >
-                      <option value="">Selecione o material…</option>
+                      <option value="">Selecione o ingrediente…</option>
                       {materials.map((m) => (
                         <option key={m.id} value={m.id}>{m.name}</option>
                       ))}
@@ -1213,7 +1213,7 @@ export default function ProdutosPage() {
                       <input
                         type="number"
                         step="0.01"
-                        placeholder="Gramas"
+                        placeholder="g / ml"
                         value={line.quantity_g}
                         onChange={(e) => updateBomLine(index, { quantity_g: e.target.value })}
                         className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm sm:w-28"
@@ -1234,7 +1234,7 @@ export default function ProdutosPage() {
                   onClick={addBomLine}
                   className="text-sm text-blue-400 hover:underline"
                 >
-                  + Adicionar material
+                  + Adicionar ingrediente
                 </button>
               </div>
             )}
@@ -1414,8 +1414,8 @@ export default function ProdutosPage() {
                               <ul className="space-y-0.5 text-neutral-500">
                                 {cost.source === "pricing" ? (
                                   <li className="text-green-300/80">
-                                    Este produto usa o preço da peça de mesmo nome salva na Precificação — com energia,
-                                    itens adicionais, mão de obra, depreciação e a margem da peça. Editou a peça? O preço
+                                    Este produto usa o preço da receita de mesmo nome salva na Precificação — com energia,
+                                    ingredientes, mão de obra, forno e a margem da receita. Editou a receita? O preço
                                     aqui acompanha.
                                   </li>
                                 ) : (
@@ -1425,10 +1425,10 @@ export default function ProdutosPage() {
                                     ? product.materials
                                         .map((line) => {
                                           const mat = materials.find((m) => m.id === line.material_id);
-                                          return `${line.quantity_g} g de ${mat?.name ?? "material"} a ${formatCurrency(mat?.cost_per_kg ?? 0)}/kg (cadastro em Materiais)`;
+                                          return `${line.quantity_g} g de ${mat?.name ?? "material"} a ${formatCurrency(mat?.cost_per_kg ?? 0)}/kg (cadastro em Ingredientes)`;
                                         })
                                         .join("; ")
-                                    : "nenhum material"}
+                                    : "nenhum ingrediente"}
                                   {" · "}
                                   {product.print_time_hours
                                     ? `${product.print_time_hours} h de forno${machine ? ` no ${machine.name} a ${formatCurrency(machine.cost_per_hour ?? 0)}/h (cadastro em Fornos)` : " sem forno"}`
@@ -1447,7 +1447,7 @@ export default function ProdutosPage() {
                                       : ""}
                                     {piece.print_time_hours != null ? ` · ${piece.print_time_hours} h` : ""}
                                     {piece.depreciation_value != null
-                                      ? ` · depreciação ${formatCurrency(piece.depreciation_value)} ${piece.depreciation_mode === "peca" ? "por peça" : "por hora"}`
+                                      ? ` · depreciação ${formatCurrency(piece.depreciation_value)} ${piece.depreciation_mode === "peca" ? "por unidade" : "por hora"}`
                                       : ""}
                                     {piece.labor_hours ? ` · ${piece.labor_hours} h de mão de obra` : ""}
                                     {piece.profit_margin_percentage != null ? ` · margem ${piece.profit_margin_percentage}%` : ""}

@@ -286,3 +286,34 @@ def test_firing_splits_kiln_time_and_energy_across_the_batch(client: TestClient)
     assert updated.status_code == 200, updated.text
     assert updated.json()["firing"]["batch_size"] == 80
     assert updated.json()["production_cost"] == pytest.approx(1.6)
+
+
+def test_recipe_lines_keep_ingredient_and_quantity(client: TestClient):
+    """Receita da confeitaria: cada linha guarda o ingrediente, a quantidade
+    da receita inteira e o custo por unidade (já dividido pelo rendimento)."""
+    owner = register_user(client, organization_name="Confeitaria", email="doces@x.io")
+    headers = auth_headers(owner["access_token"])
+    org_id = _org_id(client, headers)
+    profile = _create_cost_profile(client, org_id, headers)
+    lines = [
+        {"name": "Leite condensado", "cost": 0.5, "material_id": "abc", "quantity": 395, "unit": "g"},
+        {"name": "Caixa para fatia", "cost": 1.2},
+    ]
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/quotes",
+        json={
+            "cost_profile_id": profile["id"],
+            "material_cost": 1.7,
+            "print_time_hours": 0.05,
+            "energy_kwh": 0,
+            "labor_hours": 0.1,
+            "piece_name": "Fatia Red Velvet",
+            "extra_items": lines,
+            "firing": {"hours_per_firing": 0.8, "firings": 1, "batch_size": 16},
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    saved = response.json()["extra_items"]
+    assert saved[0]["quantity"] == 395 and saved[0]["unit"] == "g" and saved[0]["material_id"] == "abc"
+    assert saved[1]["material_id"] is None

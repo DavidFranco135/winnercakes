@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { apiFetch, ApiError, uploadImage } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/format";
 import type { Product } from "@/lib/types";
-import type { StoreAdminResponse, StoreFestival, StoreLocation, StoreSettings } from "@/lib/store";
+import type { StoreAdminResponse, StoreFestival, StoreFlavor, StoreGalleryPhoto, StoreLocation, StoreSettings } from "@/lib/store";
 import {
   ACCENTS,
   THEME_OPTIONS,
@@ -170,6 +170,22 @@ export default function LojaAdminPage() {
       setMessage("Foto do celular adicionada. Clique em “Salvar alterações” para publicar.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao enviar imagem.");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  // Envia uma foto e devolve o link (para sabores e galeria).
+  async function uploadOne(file: File): Promise<string | null> {
+    if (!accessToken) return null;
+    setIsUploading(true);
+    setError(null);
+    try {
+      const { url } = await uploadImage(`${orgPath}/uploads/image`, accessToken, file);
+      return url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao enviar imagem.");
+      return null;
     } finally {
       setIsUploading(false);
     }
@@ -619,6 +635,36 @@ export default function LojaAdminPage() {
                 locations={settings.locations ?? []}
                 onChange={(patch) => update(patch)}
               />
+              <label className="block space-y-1 border-t border-neutral-800 pt-4">
+                <span className="text-xs text-neutral-500">Aviso embaixo do calendário (horário, regras…)</span>
+                <textarea
+                  className={input}
+                  rows={2}
+                  maxLength={300}
+                  value={settings.festival_note ?? ""}
+                  placeholder="Abrimos sempre às 13h e ficamos até encerrarem as fatias!"
+                  onChange={(e) => update({ festival_note: e.target.value })}
+                />
+              </label>
+            </Card>
+
+            <Card title="Sabores" hint="Quadro de sabores na página inicial (ex.: sabores das fatias do festival). Cada sabor pode ter uma foto.">
+              <FlavorsEditor
+                title={settings.flavors_title ?? "Sabores das fatias"}
+                flavors={settings.flavors ?? []}
+                onChange={(patch) => update(patch)}
+                upload={uploadOne}
+                busy={isUploading}
+              />
+            </Card>
+
+            <Card title="Galeria de fotos" hint="Fotos de encomendas, festas e festivais, na seção “Nossas criações”. No celular passam de lado; no computador formam um mosaico.">
+              <GalleryEditor
+                photos={settings.gallery ?? []}
+                onChange={(gallery) => update({ gallery })}
+                upload={uploadOne}
+                busy={isUploading}
+              />
             </Card>
 
             <Card title="Capa com slides" hint="Fotos que passam automaticamente no topo da loja (até 10). Sem slides, usamos as fotos dos seus produtos.">
@@ -675,6 +721,32 @@ export default function LojaAdminPage() {
                             })
                           }
                         />
+                        <select
+                          className={input}
+                          value={slide.link === "whatsapp" ? "whatsapp" : slide.link ? "link" : ""}
+                          onChange={(e) =>
+                            update({
+                              slides: settings.slides.map((s, j) =>
+                                j === i ? { ...s, link: e.target.value === "link" ? "https://" : e.target.value } : s
+                              ),
+                            })
+                          }
+                        >
+                          <option value="">Ao tocar: abre o cardápio</option>
+                          <option value="whatsapp">Ao tocar: abre o WhatsApp (encomenda)</option>
+                          <option value="link">Ao tocar: abre um link…</option>
+                        </select>
+                        {slide.link && slide.link !== "whatsapp" && (
+                          <input
+                            className={input}
+                            value={slide.link}
+                            maxLength={600}
+                            placeholder="https://…"
+                            onChange={(e) =>
+                              update({ slides: settings.slides.map((s, j) => (j === i ? { ...s, link: e.target.value } : s)) })
+                            }
+                          />
+                        )}
                         {/* Foto para celular: arte em pé, mostrada só no celular (tela cheia). */}
                         <div className="flex flex-wrap items-center gap-2 rounded border border-neutral-800 p-2">
                           {slide.mobile_url ? (
@@ -1827,6 +1899,149 @@ function FestivalEditor({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ---- Sabores -----------------------------------------------------------------
+function FlavorsEditor({
+  title,
+  flavors,
+  onChange,
+  upload,
+  busy,
+}: {
+  title: string;
+  flavors: StoreFlavor[];
+  onChange: (patch: Partial<StoreSettings>) => void;
+  upload: (file: File) => Promise<string | null>;
+  busy: boolean;
+}) {
+  const set = (list: StoreFlavor[]) => onChange({ flavors: list });
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= flavors.length) return;
+    const next = [...flavors];
+    [next[i], next[j]] = [next[j], next[i]];
+    set(next);
+  };
+  return (
+    <div className="space-y-3">
+      <label className="block space-y-1">
+        <span className="text-xs text-neutral-500">Título do quadro</span>
+        <input className={input} value={title} maxLength={80} onChange={(e) => onChange({ flavors_title: e.target.value })} />
+      </label>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {flavors.map((f, i) => (
+          <li key={i} className="flex items-center gap-2 rounded-lg border border-neutral-800 p-2">
+            {f.photo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={f.photo_url} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
+            ) : (
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-neutral-900 text-xl">🍰</span>
+            )}
+            <input
+              className={input}
+              value={f.name}
+              maxLength={80}
+              placeholder="Nome do sabor"
+              onChange={(e) => set(flavors.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+            />
+            <label className="shrink-0 cursor-pointer rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500">
+              Foto
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={busy}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  const url = await upload(file);
+                  if (url) set(flavors.map((x, j) => (j === i ? { ...x, photo_url: url } : x)));
+                }}
+              />
+            </label>
+            <button onClick={() => move(i, -1)} disabled={i === 0} className="rounded border border-neutral-700 px-2 py-1 text-xs disabled:opacity-30">↑</button>
+            <button onClick={() => move(i, 1)} disabled={i === flavors.length - 1} className="rounded border border-neutral-700 px-2 py-1 text-xs disabled:opacity-30">↓</button>
+            <button onClick={() => set(flavors.filter((_, j) => j !== i))} className="rounded border border-red-900 px-2 py-1 text-xs text-red-400 hover:bg-red-950">
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+      {flavors.length < 60 && (
+        <button onClick={() => set([...flavors, { name: "", photo_url: "" }])} className="text-sm text-blue-400 hover:underline">
+          + Adicionar sabor
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---- Galeria -----------------------------------------------------------------
+function GalleryEditor({
+  photos,
+  onChange,
+  upload,
+  busy,
+}: {
+  photos: StoreGalleryPhoto[];
+  onChange: (list: StoreGalleryPhoto[]) => void;
+  upload: (file: File) => Promise<string | null>;
+  busy: boolean;
+}) {
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= photos.length) return;
+    const next = [...photos];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="space-y-3">
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:border-neutral-500">
+        {busy ? "Enviando…" : "+ Adicionar fotos"}
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          disabled={busy || photos.length >= 30}
+          onChange={async (e) => {
+            const files = Array.from(e.target.files ?? []).slice(0, 30 - photos.length);
+            e.target.value = "";
+            const added: StoreGalleryPhoto[] = [];
+            for (const file of files) {
+              const url = await upload(file);
+              if (url) added.push({ url, caption: "" });
+            }
+            if (added.length) onChange([...photos, ...added]);
+          }}
+        />
+      </label>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {photos.map((p, i) => (
+          <li key={`${p.url}-${i}`} className="flex items-center gap-2 rounded-lg border border-neutral-800 p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.url} alt="" className="h-16 w-14 shrink-0 rounded object-cover" />
+            <input
+              className={input}
+              value={p.caption ?? ""}
+              maxLength={120}
+              placeholder="Legenda (opcional)"
+              onChange={(e) => onChange(photos.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
+            />
+            <button onClick={() => move(i, -1)} disabled={i === 0} className="rounded border border-neutral-700 px-2 py-1 text-xs disabled:opacity-30">↑</button>
+            <button onClick={() => move(i, 1)} disabled={i === photos.length - 1} className="rounded border border-neutral-700 px-2 py-1 text-xs disabled:opacity-30">↓</button>
+            <button onClick={() => onChange(photos.filter((_, j) => j !== i))} className="rounded border border-red-900 px-2 py-1 text-xs text-red-400 hover:bg-red-950">
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

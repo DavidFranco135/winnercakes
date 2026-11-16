@@ -17,7 +17,8 @@ const STATUS_LABELS: Record<string, string> = {
 const TYPE_LABELS: Record<string, string> = {
   forno_eletrico: "Forno elétrico",
   forno_gas: "Forno a gás",
-  torno: "Torno",
+  batedeira: "Batedeira / planetária",
+  torno: "Equipamento",
   outro: "Outro equipamento",
 };
 
@@ -188,12 +189,12 @@ export default function MaquinasPage() {
             <select value={technology} onChange={(e) => setTechnology(e.target.value)} disabled={!!editingId} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 disabled:opacity-50">
               <option value="forno_eletrico">Forno elétrico</option>
               <option value="forno_gas">Forno a gás</option>
-              <option value="torno">Torno</option>
+              <option value="batedeira">Batedeira / planetária</option>
               <option value="outro">Outro equipamento</option>
             </select>
             <input placeholder="Marca" value={brand} onChange={(e) => setBrand(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
             <input placeholder="Modelo" value={model} onChange={(e) => setModel(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
-            <input type="number" step="0.01" placeholder="Desgaste por hora de uso (R$)" value={costPerHour} onChange={(e) => setCostPerHour(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+            <input type="number" step="0.01" placeholder="Gás + desgaste por hora de uso (R$)" value={costPerHour} onChange={(e) => setCostPerHour(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
             <input type="number" step="1" placeholder="Potência (W) — ex.: 6000 para 6 kW" value={powerWatts} onChange={(e) => setPowerWatts(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
             <div className="grid grid-cols-3 gap-2 sm:col-span-2">
               <input type="number" placeholder="Largura interna (mm)" value={volX} onChange={(e) => setVolX(e.target.value)} disabled={!!editingId} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 disabled:opacity-50" />

@@ -243,7 +243,7 @@ def test_inventory_movement_can_reference_a_valid_order(client: TestClient):
         f"/api/v1/organizations/{org_id}/inventory-items",
         json={
             "name": "Filamento PLA Branco",
-            "category": "argila",
+            "category": "ingrediente",
             "unit": "g",
             "initial_quantity": 1000,
         },
@@ -267,7 +267,7 @@ def test_inventory_movement_rejects_unknown_order(client: TestClient):
         f"/api/v1/organizations/{org_id}/inventory-items",
         json={
             "name": "Filamento PLA Branco",
-            "category": "argila",
+            "category": "ingrediente",
             "unit": "g",
             "initial_quantity": 1000,
         },

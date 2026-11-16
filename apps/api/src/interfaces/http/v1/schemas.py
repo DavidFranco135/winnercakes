@@ -216,8 +216,15 @@ class CostProfileResponse(BaseModel):
 
 
 class QuoteExtraItem(BaseModel):
+    """Linha da receita: ingrediente do cadastro (com quantidade e unidade da
+    receita inteira) ou item avulso. `cost` é o custo POR UNIDADE vendida
+    (já dividido pelo rendimento), que entra no cálculo do preço."""
+
     name: str = Field(max_length=200)
     cost: float = Field(ge=0)
+    material_id: str | None = Field(default=None, max_length=64)
+    quantity: float | None = Field(default=None, ge=0)
+    unit: str | None = Field(default=None, max_length=10)
 
 
 class QuoteFiring(BaseModel):
@@ -532,7 +539,7 @@ class ProductCostResponse(BaseModel):
 class CreateInventoryItemRequest(BaseModel):
     material_id: UUID | None = None
     name: str = Field(min_length=2, max_length=200)
-    category: str = Field(pattern="^(argila|esmalte|pigmento|embalagem|ferramenta|outro)$")
+    category: str = Field(pattern="^(ingrediente|embalagem|decoracao|ferramenta|outro)$")
     unit: str = Field(pattern="^(g|kg|un)$")
     minimum_stock: float = Field(default=0, ge=0)
     unit_cost: float | None = Field(default=None, ge=0)
@@ -636,7 +643,7 @@ class CreateMachineRequest(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     brand: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=100)
-    technology: str = Field(pattern="^(forno_eletrico|forno_gas|torno|outro)$")
+    technology: str = Field(pattern="^(forno_eletrico|forno_gas|batedeira|torno|outro)$")
     build_volume_x_mm: float | None = Field(default=None, gt=0)
     build_volume_y_mm: float | None = Field(default=None, gt=0)
     build_volume_z_mm: float | None = Field(default=None, gt=0)
@@ -727,6 +734,9 @@ class StoreSlide(BaseModel):
     y: float | None = Field(default=None, ge=0, le=100)
     # Versão da arte para celular (em pé). Vazio = usa a mesma foto.
     mobile_url: str = Field(default="", max_length=2000)
+    # Ao tocar na capa: "" = abre o cardápio; "whatsapp" = conversa de
+    # encomenda; ou um link https.
+    link: str = Field(default="", max_length=600)
 
 
 class StoreFestival(BaseModel):
@@ -750,12 +760,21 @@ class StoreLocation(BaseModel):
 
 # Loja recém-criada já abre pronta: capa do Festival de Fatias, os dois locais
 # e o calendário de novembro/dezembro postado no Instagram da Winner Cakes.
-_DEFAULT_SLIDE = {
-    "url": "/brand/slide-festival.jpg",
-    "title": "",
-    "subtitle": "",
-    "mobile_url": "/brand/slide-festival-celular.jpg",
-}
+_DEFAULT_SLIDES = [
+    {
+        "url": "/brand/slide-festival.jpg",
+        "title": "",
+        "subtitle": "",
+        "mobile_url": "/brand/slide-festival-celular.jpg",
+    },
+    {
+        "url": "/brand/slide-encomendas.jpg",
+        "title": "",
+        "subtitle": "",
+        "mobile_url": "/brand/slide-encomendas-celular.jpg",
+        "link": "whatsapp",
+    },
+]
 _DEFAULT_LOCATIONS = [
     {
         "name": "Festival Bay Market - NIT",
@@ -782,6 +801,48 @@ _DEFAULT_FESTIVALS = [
         "time": "a partir das 13h",
         "note": "Exclusivo Nova Cidade",
     }
+]
+
+
+class StoreFlavor(BaseModel):
+    """Um sabor (ex.: de fatia) mostrado no quadro "Sabores" da vitrine."""
+
+    name: str = Field(min_length=1, max_length=80)
+    photo_url: str = Field(default="", max_length=2000)
+
+
+class StoreGalleryPhoto(BaseModel):
+    url: str = Field(max_length=2000)
+    caption: str = Field(default="", max_length=120)
+
+
+_DEFAULT_FLAVORS = [
+    ("Chocolatuda", "/brand/sabores/chocolatuda.jpg"),
+    ("Maracujá com chocolate", "/brand/sabores/maracuja-com-chocolate.jpg"),
+    ("Matilda cake", "/brand/sabores/matilda-cake.jpg"),
+    ("Abacaxi com coco", "/brand/sabores/abacaxi-com-coco.jpg"),
+    ("Abacaxi com ninho", "/brand/sabores/abacaxi-com-ninho.jpg"),
+    ("Abacaxi com doce de leite", "/brand/sabores/abacaxi-com-doce-de-leite.jpg"),
+    ("Bolo pudim", "/brand/sabores/bolo-pudim.jpg"),
+    ("Olho de sogra", "/brand/sabores/olho-de-sogra.jpg"),
+    ("Nozes", "/brand/sabores/nozes.jpg"),
+    ("Rafaello", "/brand/sabores/rafaello.jpg"),
+    ("Doce de leite crocante", "/brand/sabores/doce-de-leite-crocante.jpg"),
+    ("Ninho com Nutella", "/brand/sabores/ninho-com-nutella.jpg"),
+    ("Maracujá com ninho", "/brand/sabores/maracuja-com-ninho.jpg"),
+    ("Morango com ninho", "/brand/sabores/morango-com-ninho.jpg"),
+    ("Maracujá com morango", "/brand/sabores/maracuja-com-morango.jpg"),
+    ("Morango com chocolate", "/brand/sabores/morango-com-chocolate.jpg"),
+    ("Ovomaltine", "/brand/sabores/ovomaltine.jpg"),
+    ("Kinder Bueno", "/brand/sabores/kinder-bueno.jpg"),
+    ("Ferrero Rocher", "/brand/sabores/ferrero-rocher.jpg"),
+]
+_DEFAULT_GALLERY = [
+    ("/brand/galeria/bolo-lacos.jpg", "Bolo com laços e docinhos"),
+    ("/brand/galeria/bolo-capivara.jpg", "Bolo temático de aniversário"),
+    ("/brand/galeria/bolo-chantilly.jpg", "Bolo de chantilly com gotas de chocolate"),
+    ("/brand/galeria/docinhos.jpg", "Docinhos para festa"),
+    ("/brand/galeria/winner-docinhos.jpg", "Encomenda de docinhos pronta"),
 ]
 
 
@@ -835,7 +896,7 @@ class StoreSettings(BaseModel):
     accent: str = Field(default="vermelho", max_length=20)
     theme: str = Field(default="winner", pattern="^(light|dark|winner)$")
     slides: list[StoreSlide] = Field(
-        default_factory=lambda: [StoreSlide(**_DEFAULT_SLIDE)], max_length=10
+        default_factory=lambda: [StoreSlide(**s) for s in _DEFAULT_SLIDES], max_length=10
     )
     highlights: list[StoreHighlight] = Field(default_factory=list, max_length=3)
     # Links de Reels/posts do Instagram mostrados na vitrine (vídeos incorporados).
@@ -925,6 +986,24 @@ class StoreSettings(BaseModel):
     )
     locations: list[StoreLocation] = Field(
         default_factory=lambda: [StoreLocation(**loc) for loc in _DEFAULT_LOCATIONS], max_length=20
+    )
+    # Aviso embaixo do calendário (horário, "até acabarem as fatias"...).
+    festival_note: str = Field(
+        default=(
+            "Abrimos sempre às 13h e ficamos até encerrarem as fatias! "
+            "Na última semana de dezembro não teremos festival."
+        ),
+        max_length=300,
+    )
+    # Quadro de sabores e galeria de fotos (encomendas, festas, festivais).
+    flavors: list[StoreFlavor] = Field(
+        default_factory=lambda: [StoreFlavor(name=n, photo_url=u) for n, u in _DEFAULT_FLAVORS],
+        max_length=60,
+    )
+    flavors_title: str = Field(default="Sabores das fatias", max_length=80)
+    gallery: list[StoreGalleryPhoto] = Field(
+        default_factory=lambda: [StoreGalleryPhoto(url=u, caption=c) for u, c in _DEFAULT_GALLERY],
+        max_length=30,
     )
 
     @field_validator("product_discounts")
@@ -1080,6 +1159,10 @@ class PublicStoreSettings(BaseModel):
     # Só os festivais de hoje em diante, em ordem de data.
     festivals: list[StoreFestival] = Field(default_factory=list)
     locations: list[StoreLocation] = Field(default_factory=list)
+    festival_note: str = ""
+    flavors: list[StoreFlavor] = Field(default_factory=list)
+    flavors_title: str = ""
+    gallery: list[StoreGalleryPhoto] = Field(default_factory=list)
 
 
 class PublicStoreResponse(BaseModel):

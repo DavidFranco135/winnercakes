@@ -27,7 +27,7 @@ def _create_material(client: TestClient, org_id: str, headers: dict, **overrides
 def _create_item(client: TestClient, org_id: str, headers: dict, **overrides) -> dict:
     payload = {
         "name": "Filamento PLA Branco 1kg",
-        "category": "argila",
+        "category": "ingrediente",
         "unit": "g",
         "minimum_stock": 200,
         "unit_cost": 0.09,
@@ -81,7 +81,7 @@ def test_rejects_inventory_item_with_unknown_material(client: TestClient):
         json={
             "material_id": "00000000-0000-0000-0000-000000000000",
             "name": "Item fantasma",
-            "category": "argila",
+            "category": "ingrediente",
             "unit": "g",
         },
         headers=headers,
@@ -207,7 +207,7 @@ def test_viewer_cannot_create_inventory_item(client: TestClient):
 
     response = client.post(
         f"/api/v1/organizations/{org_id}/inventory-items",
-        json={"name": "Not allowed", "category": "argila", "unit": "g"},
+        json={"name": "Not allowed", "category": "ingrediente", "unit": "g"},
         headers=auth_headers(viewer["access_token"]),
     )
     assert response.status_code == 403

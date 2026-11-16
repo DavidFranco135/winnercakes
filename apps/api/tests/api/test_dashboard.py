@@ -56,7 +56,7 @@ def test_dashboard_aggregates_across_modules(client: TestClient):
         f"/api/v1/organizations/{org_id}/inventory-items",
         json={
             "name": "Filamento PLA",
-            "category": "argila",
+            "category": "ingrediente",
             "unit": "g",
             "minimum_stock": 500,
             "initial_quantity": 100,

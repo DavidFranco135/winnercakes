@@ -8,12 +8,16 @@ export type StoreSlide = {
   x?: number | null;
   y?: number | null;
   mobile_url?: string;
+  // Ao tocar: "" = cardápio, "whatsapp" = conversa de encomenda, ou um link.
+  link?: string;
 };
 export type StoreHighlight = { title: string; text: string };
 // Um dia de Festival de Fatias: data (AAAA-MM-DD), local, horário e link do mapa.
 export type StoreFestival = { date: string; place: string; time?: string; note?: string; maps_url?: string };
 // Local fixo onde a loja costuma estar.
 export type StoreLocation = { name: string; address?: string; schedule?: string; maps_url?: string };
+export type StoreFlavor = { name: string; photo_url?: string };
+export type StoreGalleryPhoto = { url: string; caption?: string };
 // cover_url: foto principal da categoria na vitrine ("" = automática).
 // cover_x / cover_y: enquadramento da foto principal (0-100, 50 = centro).
 export type StoreCategory = {
@@ -96,6 +100,11 @@ export type StoreSettings = {
   // Calendário dos Festivais de Fatias e locais.
   festivals?: StoreFestival[];
   locations?: StoreLocation[];
+  festival_note?: string;
+  // Quadro de sabores e galeria de fotos.
+  flavors?: StoreFlavor[];
+  flavors_title?: string;
+  gallery?: StoreGalleryPhoto[];
 };
 
 export type StoreAdminResponse = { slug: string; name: string; settings: StoreSettings };

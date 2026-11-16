@@ -15,6 +15,7 @@ import { SearchOverlay } from "./SearchOverlay";
 import { useStoreFx } from "./fx";
 import { HeroSlider } from "./HeroSlider";
 import { FestivalsSection, nextFestivalNotice } from "./Festivals";
+import { FlavorsSection, GallerySection } from "./Showcase";
 import { SplashIntro } from "./SplashIntro";
 import { DesktopNav, MenuButton, MobileMenu, type NavCategory } from "./StoreNav";
 import { ProductCard } from "./ProductCard";
@@ -775,6 +776,7 @@ export function Storefront({ slug }: { slug: string }) {
                   storeName={storeName}
                   tagline={settings.tagline}
                   whatsappHref={waGeneral}
+                  orderHref={waCustom}
                   onCatalog={() => openCategory(null)}
                 />
                 </div>
@@ -784,7 +786,27 @@ export function Storefront({ slug }: { slug: string }) {
                 <FestivalsSection
                   festivals={settings.festivals}
                   locations={settings.locations}
+                  note={settings.festival_note}
                   heading={<SectionTitle eyebrow="Toda semana" title={<>Festival de <Em>Fatias</Em></>} />}
+                />
+
+                <FlavorsSection
+                  flavors={settings.flavors}
+                  heading={
+                    <SectionTitle
+                      eyebrow="Escolha o seu favorito"
+                      title={(() => {
+                        const t = (settings.flavors_title || "Sabores das fatias").trim();
+                        const [first, ...rest] = t.split(" ");
+                        return rest.length ? <>{first} <Em>{rest.join(" ")}</Em></> : t;
+                      })()}
+                    />
+                  }
+                  footer={
+                    <p className="text-center font-[family-name:var(--font-display)] text-lg italic text-[var(--accent-text)]">
+                      Feito com amor, para momentos inesquecíveis!
+                    </p>
+                  }
                 />
 
                 {/* Sem barra de busca nem selos aqui: a lupa fica no topo e os selos no rodapé. */}
@@ -904,6 +926,11 @@ export function Storefront({ slug }: { slug: string }) {
                   </ul>
                 </section>
               </Reveal>
+
+              <GallerySection
+                photos={settings.gallery}
+                heading={<SectionTitle eyebrow="Encomendas e festas" title={<>Nossas <Em>criações</Em></>} />}
+              />
 
               {settings.about && (
                 <Reveal>
