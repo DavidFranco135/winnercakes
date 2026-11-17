@@ -78,13 +78,21 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
     });
   }
 
+  // Veio pelo QR da fila (link com #ao-vivo): rola direto para o cardápio.
+  const hasLive = Boolean(live && live.items.length > 0);
+  useEffect(() => {
+    if (!hasLive || window.location.hash !== "#ao-vivo") return;
+    const t = setTimeout(() => document.getElementById("ao-vivo")?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+    return () => clearTimeout(t);
+  }, [hasLive]);
+
   if (!live || live.items.length === 0) return null;
   const closed = live.status === "encerrado";
   const preparing = live.status === "preparando";
   const items = [...live.items].sort((a, b) => Number(a.sold_out) - Number(b.sold_out));
 
   return (
-    <section className="space-y-5">
+    <section id="ao-vivo" className="scroll-mt-32 space-y-5">
       <Reveal>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-2">

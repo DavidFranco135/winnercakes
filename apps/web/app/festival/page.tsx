@@ -15,6 +15,7 @@ import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import type { FestivalItem, FestivalOnlineOrder, FestivalSale, FestivalState, FestivalStatus, MercadoPagoSettings, RedeemResult } from "@/lib/festival";
 import { PAYMENT_LABELS, heldByItem, newSaleId, remaining, todayBRT } from "@/lib/festival";
 import { QrScanner } from "@/components/QrScanner";
+import QRCode from "qrcode";
 
 type Tab = "vender" | "retirada" | "cardapio" | "resumo";
 
@@ -327,6 +328,35 @@ export default function FestivalPage() {
     },
     [accessToken, orgPath, day]
   );
+
+  // Cartaz com o QR da fila: abre a loja direto no cardápio ao vivo.
+  async function printQueuePoster() {
+    const url = `${window.location.origin}/#ao-vivo`;
+    const qr = await QRCode.toDataURL(url, { margin: 1, width: 900, errorCorrectionLevel: "M" });
+    const w = window.open("", "_blank");
+    if (!w) {
+      setError("Libere pop-ups para imprimir o cartaz.");
+      return;
+    }
+    w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>QR da fila</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  body { font-family: system-ui, sans-serif; text-align: center; color: #3a1a12; margin: 0; }
+  h1 { font-size: 46px; margin: 18px 0 6px; color: #c8102e; }
+  p { font-size: 24px; margin: 6px 0; }
+  img { width: 120mm; height: 120mm; margin: 18px auto; display: block; }
+  ol { text-align: left; display: inline-block; font-size: 22px; line-height: 1.6; }
+  small { display: block; margin-top: 14px; font-size: 14px; color: #8a6a60; }
+</style></head><body>
+  <h1>Pule a fila do caixa!</h1>
+  <p>Aponte a câmera do celular para o QR</p>
+  <img src="${qr}" alt="QR">
+  <ol><li>Escolha suas fatias</li><li>Pague com Pix</li><li>Retire na banca mostrando o QR do ticket</li></ol>
+  <small>${url.replace(/^https?:\/\//, "")}</small>
+  <script>window.onload = () => setTimeout(() => window.print(), 300);<\/script>
+</body></html>`);
+    w.document.close();
+  }
 
   async function saveMp() {
     if (!accessToken) return;
@@ -879,7 +909,12 @@ export default function FestivalPage() {
             </div>
 
             <div className="space-y-4 rounded-xl border border-neutral-800 p-4 text-sm text-neutral-300">
-              <p className="font-semibold text-white">Venda pelo celular (Pix na fila)</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-white">Venda pelo celular (Pix na fila)</p>
+                <button onClick={printQueuePoster} className="rounded-lg border border-neutral-600 px-3 py-2 text-sm font-medium text-white">
+                  Imprimir cartaz com QR da fila
+                </button>
+              </div>
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2">
                   Guardar para o balcão
