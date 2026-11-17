@@ -1035,8 +1035,6 @@ class StoreSettings(BaseModel):
     # Selos de confiança mostrados na vitrine e no pedido.
     trust_badges: list[str] = Field(
         default_factory=lambda: [
-            "Feito à mão, peça por peça",
-            "Envio para todo o Brasil",
             "Pagamento combinado no WhatsApp",
         ],
         max_length=6,

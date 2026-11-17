@@ -188,7 +188,18 @@ export function MenuButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+export type MenuSection = {
+  id: string; // id do elemento na página inicial
+  title: string;
+  hint?: string;
+  image?: string;
+  icon?: string; // emoji quando não há foto
+  live?: boolean;
+};
+
 export function MobileMenu({
+  sections = [],
+  onSection,
   logoSrc = "",
   open,
   onClose,
@@ -202,6 +213,8 @@ export function MobileMenu({
   onTab,
   onCategory,
 }: NavProps & {
+  sections?: MenuSection[];
+  onSection?: (id: string) => void;
   logoSrc?: string;
   open: boolean;
   onClose: () => void;
@@ -292,6 +305,43 @@ export function MobileMenu({
           <button className={`${row} ${rowTone(tab === 1 && activeCategoryId === null)}`} onClick={() => pick(() => onCategory(null))}>
             Todos os produtos
           </button>
+
+          {sections.length > 0 && onSection && (
+            <>
+              <p className="px-4 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">No site</p>
+              <div className="grid grid-cols-2 gap-2 px-1 pb-1">
+                {sections.map((sec, i) => (
+                  <button
+                    key={sec.id}
+                    onClick={() => pick(() => onSection(sec.id))}
+                    style={{ animationDelay: open ? `${60 + i * 40}ms` : undefined }}
+                    className={`group relative flex h-24 flex-col justify-end overflow-hidden rounded-2xl border border-[var(--line)] p-2.5 text-left transition active:scale-[0.97] ${
+                      open ? "animate-fade-up" : ""
+                    } ${sec.image ? "text-white" : "bg-[var(--surface)] text-[var(--ink)]"}`}
+                  >
+                    {sec.image ? (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imgSrc(sec.image, IMG_WIDTH.thumb)} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover transition duration-500 group-active:scale-105" />
+                        <span className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
+                      </>
+                    ) : (
+                      sec.icon && <span className="absolute right-2.5 top-2 text-2xl">{sec.icon}</span>
+                    )}
+                    {sec.live && (
+                      <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-[#e53935] px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> Ao vivo
+                      </span>
+                    )}
+                    <span className="relative text-sm font-semibold leading-tight">{sec.title}</span>
+                    {sec.hint && (
+                      <span className={`relative line-clamp-1 text-[11px] ${sec.image ? "text-white/85" : "text-[var(--muted)]"}`}>{sec.hint}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {categories.length > 0 && (
             <p className="px-4 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Categorias</p>

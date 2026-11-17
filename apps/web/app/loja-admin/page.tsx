@@ -1172,14 +1172,14 @@ export default function LojaAdminPage() {
               hint="Selos que passam segurança ao cliente, o prazo de produção (aparece na página inicial, no produto e no pedido) e o modo escuro automático."
             >
               <div className="space-y-2">
-                <p className="text-xs text-neutral-500">Selos de confiança (até 6) — ex.: Feito à mão · Envio para todo o Brasil</p>
+                <p className="text-xs text-neutral-500">Selos de confiança (até 6) — ex.: Feito com amor · Encomendas pelo WhatsApp</p>
                 {(settings.trust_badges ?? []).map((badge, i) => (
                   <div key={i} className="flex gap-2">
                     <input
                       className={input}
                       value={badge}
                       maxLength={60}
-                      placeholder="Ex.: Envio para todo o Brasil"
+                      placeholder="Ex.: Encomendas pelo WhatsApp"
                       onChange={(e) =>
                         update({
                           trust_badges: (settings.trust_badges ?? []).map((b, j) => (j === i ? e.target.value : b)),

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/format";
 import type { CartLine, OrderLine, PublicProduct, PublicStore, StoreSlide } from "@/lib/store";
-import { computeTotals, darkVariant, storeBackground, formatPercent, isBrandLogo, promoNotices, unitPrice, formatWhatsappDisplay, logoForTheme, instagramEmbedUrl, priceLabel, themeVars, whatsappLink } from "@/lib/store";
+import { festivalDateParts, upcomingFestivals, computeTotals, darkVariant, storeBackground, formatPercent, isBrandLogo, promoNotices, unitPrice, formatWhatsappDisplay, logoForTheme, instagramEmbedUrl, priceLabel, themeVars, whatsappLink } from "@/lib/store";
 import { focusStyle } from "@/lib/focus";
 import { matchesSearch } from "@/lib/search";
 import { trackStoreEvent, useVisitTracker } from "@/lib/visits";
@@ -18,7 +18,7 @@ import { FestivalsSection, LocationsSection, nextFestivalNotice } from "./Festiv
 import { LiveMenu, useLiveFestival } from "./LiveMenu";
 import { CakeTablesSection, FaqSection, FlavorsSection, GallerySection } from "./Showcase";
 import { SplashIntro } from "./SplashIntro";
-import { DesktopNav, MenuButton, MobileMenu, type NavCategory } from "./StoreNav";
+import { DesktopNav, MenuButton, MobileMenu, type MenuSection, type NavCategory } from "./StoreNav";
 import { ProductCard } from "./ProductCard";
 import { ProductModal } from "./ProductModal";
 import { PromoPopup, PromoSideTab, PromoStrip, usePromoAutoOpen } from "./PromoPopup";
@@ -431,6 +431,20 @@ export function Storefront({ slug }: { slug: string }) {
     [tab]
   );
 
+  // Cards do menu lateral: levam para cada parte da página inicial.
+  const goSection = useCallback(
+    (id: string) => {
+      const scroll = () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (tab !== 0) {
+        goTab(0);
+        setTimeout(scroll, 450);
+      } else {
+        setTimeout(scroll, 60);
+      }
+    },
+    [tab, goTab]
+  );
+
   useEffect(() => {
     const onPop = (event: PopStateEvent) => {
       if (event.state?.overlay) return;
@@ -511,6 +525,42 @@ export function Storefront({ slug }: { slug: string }) {
       </>
     );
   }
+  // Selos herdados do modelo da cerâmica que não valem para a confeitaria.
+  const trustBadges = (settings.trust_badges ?? []).filter(
+    (b) => !/todo o brasil|peça por peça|feit[oa] à mão/i.test(b)
+  );
+
+  const nextFest = upcomingFestivals(settings.festivals)[0];
+  const menuSections: MenuSection[] = [
+    ...(liveFestival && liveFestival.items.length > 0
+      ? [{ id: "ao-vivo", title: "Fatias de hoje", hint: "O que tem agora na vitrine", icon: "🍰", live: true }]
+      : []),
+    ...(settings.festivals?.length
+      ? [
+          {
+            id: "sec-festival",
+            title: "Festival de Fatias",
+            hint: nextFest ? `${festivalDateParts(nextFest.date).short} · ${nextFest.place.replace(/^Festival\s+/i, "")}` : "Calendário",
+            icon: "📅",
+          },
+        ]
+      : []),
+    ...(settings.flavors?.length
+      ? [{ id: "sec-sabores", title: "Sabores", hint: `${settings.flavors.length} sabores`, image: settings.flavors.find((f) => f.photo_url)?.photo_url }]
+      : []),
+    ...(settings.cake_tables?.length
+      ? [{ id: "sec-tabela", title: "Tabela de bolos", hint: "Tamanhos e preços", image: settings.cake_tables.find((t) => t.photo_url)?.photo_url }]
+      : []),
+    ...(settings.gallery?.length
+      ? [{ id: "sec-criacoes", title: "Nossas criações", hint: "Fotos das encomendas", image: settings.gallery[0]?.url }]
+      : []),
+    ...(settings.locations?.length
+      ? [{ id: "sec-onde", title: "Onde estamos", hint: settings.locations.map((l) => l.address || l.name).join(" · "), icon: "📍" }]
+      : []),
+    { id: "sec-encomendas", title: "Encomendas", hint: "Bolo da sua festa", icon: "🎂" },
+    ...(settings.faq?.length ? [{ id: "sec-duvidas", title: "Dúvidas", hint: "Perguntas frequentes", icon: "💬" }] : []),
+  ];
+
 
   const storeName = settings.display_name || store.name;
   const waGeneral = whatsappLink(
@@ -748,6 +798,8 @@ export function Storefront({ slug }: { slug: string }) {
       </header>
 
       <MobileMenu
+        sections={menuSections}
+        onSection={goSection}
         logoSrc={
           settings.logo_url
             ? imgSrc(logoForTheme(settings.logo_url, effectiveTheme === "winner-noite" || effectiveTheme === "dark"), IMG_WIDTH.thumb)
@@ -787,6 +839,7 @@ export function Storefront({ slug }: { slug: string }) {
 
                 <LiveMenu live={liveFestival} slug={slug} />
 
+                <div id="sec-festival" className="scroll-mt-36">
                 <FestivalsSection
                   festivals={settings.festivals}
                   locations={settings.locations}
@@ -794,7 +847,9 @@ export function Storefront({ slug }: { slug: string }) {
                   note={settings.festival_note}
                   heading={<SectionTitle eyebrow="Toda semana" title={<>Festival de <Em>Fatias</Em></>} />}
                 />
+                </div>
 
+                <div id="sec-sabores" className="scroll-mt-36">
                 <FlavorsSection
                   flavors={settings.flavors}
                   heading={
@@ -813,20 +868,27 @@ export function Storefront({ slug }: { slug: string }) {
                     </p>
                   }
                 />
+                </div>
 
+                <div id="sec-tabela" className="scroll-mt-36">
                 <CakeTablesSection
                   tables={settings.cake_tables}
                   note={settings.cake_table_note}
                   orderLink={(text) => whatsappLink(settings.whatsapp, text)}
                   heading={<SectionTitle eyebrow="Encomendas" title={<>Tabela de <Em>bolos</Em></>} />}
                 />
+                </div>
 
+                <div id="sec-criacoes" className="scroll-mt-36">
                 <GallerySection
                   photos={settings.gallery}
                   heading={<SectionTitle eyebrow="Encomendas e festas" title={<>Nossas <Em>criações</Em></>} />}
                 />
+                </div>
 
-                <LocationsSection locations={settings.locations} />
+                <div id="sec-onde" className="scroll-mt-36">
+                  <LocationsSection locations={settings.locations} />
+                </div>
 
                 {/* Sem barra de busca nem selos aqui: a lupa fica no topo e os selos no rodapé. */}
 
@@ -914,7 +976,7 @@ export function Storefront({ slug }: { slug: string }) {
               )}
 
               <Reveal>
-                <section className="grid items-center gap-8 rounded-[32px] border border-[var(--line)] bg-[var(--accent-soft)] p-8 sm:p-12 lg:grid-cols-[1.2fr_1fr]">
+                <section id="sec-encomendas" className="grid scroll-mt-36 items-center gap-8 rounded-[32px] border border-[var(--line)] bg-[var(--accent-soft)] p-8 sm:p-12 lg:grid-cols-[1.2fr_1fr]">
                   <div className="space-y-4">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--accent-text)]">
                       Encomendas
@@ -946,10 +1008,12 @@ export function Storefront({ slug }: { slug: string }) {
                 </section>
               </Reveal>
 
+              <div id="sec-duvidas" className="scroll-mt-36">
               <FaqSection
                 items={settings.faq}
                 heading={<SectionTitle eyebrow="Para pedir com tranquilidade" title={<>Dúvidas <Em>frequentes</Em></>} />}
               />
+              </div>
 
               {settings.about && (
                 <Reveal>
@@ -1366,7 +1430,7 @@ export function Storefront({ slug }: { slug: string }) {
         </div>
 
         <div className="mx-auto flex max-w-[1600px] flex-col items-center gap-4 px-4 pb-8 sm:px-6 lg:px-10">
-          <TrustBadges badges={settings.trust_badges} variant="compact" className="justify-center text-[var(--footer-ink)]" />
+          <TrustBadges badges={trustBadges} variant="compact" className="justify-center text-[var(--footer-ink)]" />
           <InstallAppButton storeName={storeName} className="flex flex-col items-center text-[var(--footer-ink)]" />
         </div>
 
@@ -1473,7 +1537,7 @@ export function Storefront({ slug }: { slug: string }) {
         onClear={() => setLines([])}
         onBrowse={() => goTab(1)}
         onSent={() => showToast("Abrindo o WhatsApp…")}
-        badges={settings.trust_badges}
+        badges={trustBadges}
         productionDays={settings.production_days}
         rules={discountRules}
       />
