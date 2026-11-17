@@ -45,8 +45,9 @@ export function useLiveFestival(slug: string): PublicFestivalLive | null {
   return live;
 }
 
-function countLabel(n: number): string {
+function countLabel(n: number, kind?: string): string {
   if (n <= 0) return "Esgotado";
+  if (kind === "produto") return n <= 3 ? `Últimas ${n}` : `${n} unid.`;
   if (n <= 3) return n === 1 ? "Última fatia!" : `Últimas ${n}`;
   return `${n} fatias`;
 }
@@ -64,6 +65,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
   const byId = useMemo(() => new Map((live?.items ?? []).map((i) => [i.id, i])), [live]);
   const lines = Object.entries(cart).filter(([id, q]) => q > 0 && byId.has(id));
   const count = lines.reduce((s, [, q]) => s + q, 0);
+  const sliceCount = lines.reduce((s, [id, q]) => s + ((byId.get(id)?.kind ?? "fatia") === "fatia" ? q : 0), 0);
   const total = lines.reduce((s, [id, q]) => s + q * (byId.get(id)?.price ?? 0), 0);
   const maxTotal = live?.max_per_order ?? 6;
 
@@ -72,8 +74,13 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
     if (!it) return;
     setCart((c) => {
       const current = c[id] ?? 0;
-      const others = Object.entries(c).reduce((s, [k, q]) => (k === id ? s : s + q), 0);
-      const next = Math.max(0, Math.min(current + delta, it.online_available, maxTotal - others));
+      const isSlice = (it.kind ?? "fatia") === "fatia";
+      const others = Object.entries(c).reduce(
+        (s, [k, q]) => (k === id || (byId.get(k)?.kind ?? "fatia") !== "fatia" ? s : s + q),
+        0
+      );
+      const limit = isSlice ? maxTotal - others : Number.POSITIVE_INFINITY;
+      const next = Math.max(0, Math.min(current + delta, it.online_available, limit));
       return { ...c, [id]: next };
     });
   }
@@ -89,7 +96,11 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
   if (!live || live.items.length === 0) return null;
   const closed = live.status === "encerrado";
   const preparing = live.status === "preparando";
-  const items = [...live.items].sort((a, b) => Number(a.sold_out) - Number(b.sold_out));
+  const items = [...live.items].sort(
+    (a, b) =>
+      Number((a.kind ?? "fatia") === "produto") - Number((b.kind ?? "fatia") === "produto") ||
+      Number(a.sold_out) - Number(b.sold_out)
+  );
 
   return (
     <section id="ao-vivo" className="scroll-mt-32 space-y-5">
@@ -148,7 +159,9 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
                   className={`aspect-square w-full object-cover ${it.sold_out ? "grayscale" : ""}`}
                 />
               ) : (
-                <div className="aspect-square w-full bg-[var(--accent-soft)]" />
+                <div className="flex aspect-[4/3] w-full items-center justify-center bg-[var(--accent-soft)] text-5xl">
+                  {(it.kind ?? "fatia") === "produto" ? "🥤" : "🍰"}
+                </div>
               )}
               <span
                 className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow ${
@@ -159,7 +172,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
                       : "bg-white text-[var(--accent-text)]"
                 }`}
               >
-                {countLabel(it.remaining)}
+                {countLabel(it.remaining, it.kind)}
               </span>
               <div className="space-y-0.5 p-3">
                 <p className="text-sm font-semibold leading-snug">{it.flavor}</p>
@@ -178,7 +191,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
                       <span className="text-base font-bold">{cart[it.id] ?? 0}</span>
                       <button
                         onClick={() => bump(it.id, 1)}
-                        disabled={(cart[it.id] ?? 0) >= it.online_available || count >= maxTotal}
+                        disabled={(cart[it.id] ?? 0) >= it.online_available || ((it.kind ?? "fatia") === "fatia" && sliceCount >= maxTotal)}
                         aria-label={`Adicionar ${it.flavor}`}
                         className="h-9 w-9 rounded-full bg-[var(--accent)] text-lg font-semibold text-[var(--accent-ink)] disabled:opacity-30"
                       >
@@ -198,7 +211,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
         createPortal(
           <div className="fixed inset-x-3 bottom-3 z-[60] mx-auto flex max-w-xl items-center gap-3 rounded-full bg-[var(--ink)] p-2 pl-5 text-[var(--bg)] shadow-2xl">
             <span className="flex-1 text-sm">
-              <strong>{count}</strong> {count === 1 ? "fatia" : "fatias"} · <strong>{formatBRL(total)}</strong>
+              <strong>{count}</strong> {count === 1 ? "item" : "itens"} · <strong>{formatBRL(total)}</strong>
             </span>
             <button
               onClick={() => setCheckout(true)}

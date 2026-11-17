@@ -4,8 +4,11 @@ import { apiFetch } from "@/lib/api-client";
 
 export type FestivalStatus = "preparando" | "aberto" | "encerrado";
 
+export type ItemKind = "fatia" | "produto";
+
 export interface FestivalItem {
   id: string;
+  kind?: ItemKind;
   flavor: string;
   photo_url: string;
   price: number;
@@ -69,6 +72,7 @@ export interface PublicFestivalLive {
   status: FestivalStatus;
   items: {
     id: string;
+    kind?: ItemKind;
     flavor: string;
     photo_url: string;
     price: number;
@@ -174,6 +178,12 @@ export const PAYMENT_LABELS: Record<string, string> = {
   cartao: "Cartão",
   pix: "Pix",
 };
+
+/** "3 fatias" / "1 unid." conforme o tipo do item. */
+export function unitLabel(kind: ItemKind | undefined, n: number): string {
+  if (kind === "produto") return `${n} ${n === 1 ? "unid." : "unid."}`;
+  return `${n} ${n === 1 ? "fatia" : "fatias"}`;
+}
 
 export function remaining(item: FestivalItem): number {
   return Math.max(0, item.slices_total - item.sold);

@@ -282,3 +282,18 @@ def test_mp_token_never_returned(client: TestClient, online):
     assert "APP_USR" not in r.text
     r = client.get(online["base"], headers=online["headers"])
     assert "APP_USR" not in r.text
+
+
+def test_products_like_drinks(client: TestClient):
+    org_id, _slug, headers = _setup(client)
+    base = f"/api/v1/organizations/{org_id}/festival-live/2026-12-05"
+    items = [
+        {"id": "ninho", "flavor": "Ninho", "price": 15, "slices_total": 5},
+        {"id": "coca", "kind": "produto", "flavor": "Coca-Cola lata", "price": 6, "slices_total": 2},
+    ]
+    body = client.put(base, json=_config(items), headers=headers).json()
+    assert body["items"][1]["kind"] == "produto"
+    r = client.post(f"{base}/sales", json=_sale([{"item_id": "coca", "qty": 3}]), headers=headers)
+    assert r.status_code == 409 and "2 unidades" in r.json()["detail"]
+    r = client.post(f"{base}/sales", json=_sale([{"item_id": "coca", "qty": 2}, {"item_id": "ninho", "qty": 1}]), headers=headers)
+    assert r.json()["sales"][0]["total"] == 27

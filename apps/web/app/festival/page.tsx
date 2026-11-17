@@ -13,7 +13,7 @@ import type { StoreAdminResponse, StoreFestival, StoreFlavor } from "@/lib/store
 import { festivalDateParts, formatBRL, upcomingFestivals } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import type { FestivalItem, FestivalOnlineOrder, FestivalSale, FestivalState, FestivalStatus, MercadoPagoSettings, RedeemResult } from "@/lib/festival";
-import { PAYMENT_LABELS, heldByItem, newSaleId, remaining, todayBRT } from "@/lib/festival";
+import { PAYMENT_LABELS, heldByItem, newSaleId, remaining, todayBRT, unitLabel } from "@/lib/festival";
 import { QrScanner } from "@/components/QrScanner";
 import QRCode from "qrcode";
 
@@ -91,6 +91,15 @@ export default function FestivalPage() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [slicesPerCake, setSlicesPerCake] = useState(16);
+  const [newProd, setNewProd] = useState({ name: "", price: "", qty: "" });
+  // Modo PDV em tela cheia (sem menu lateral). Fica lembrado no aparelho.
+  const [kiosk, setKiosk] = useState<boolean>(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem("festival_kiosk") === "1";
+    } catch {
+      return false;
+    }
+  });
 
   // PDV
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -300,6 +309,26 @@ export default function FestivalPage() {
     }
   }
 
+  function toggleKiosk() {
+    const next = !kiosk;
+    setKiosk(next);
+    try {
+      localStorage.setItem("festival_kiosk", next ? "1" : "0");
+    } catch {
+      /* sem armazenamento */
+    }
+    const doc = document as Document & { webkitExitFullscreen?: () => void };
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+    if (next) {
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else el.webkitRequestFullscreen?.();
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      doc.webkitExitFullscreen?.();
+    }
+  }
+
   // ---- Retirada (ticket do celular) ----
   const redeemCode = useCallback(
     async (code: string) => {
@@ -384,13 +413,17 @@ export default function FestivalPage() {
   function editItem(id: string, patch: Partial<FestivalItem>) {
     editDraft((d) => ({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) }));
   }
-  function addFlavor(name: string, photo = "") {
+  function addFlavor(name: string, photo = "", kind: "fatia" | "produto" = "fatia", price?: number) {
     if (!name.trim()) return;
     editDraft((d) => {
       const used = new Set(d.items.map((i) => i.id));
+      const samePrice = d.items.find((i) => (i.kind ?? "fatia") === kind)?.price ?? 0;
       return {
         ...d,
-        items: [...d.items, { id: slugId(name, used), flavor: name.trim(), photo_url: photo, price: d.items[0]?.price ?? 0, slices_total: 0, sold: 0 }],
+        items: [
+          ...d.items,
+          { id: slugId(name, used), kind, flavor: name.trim(), photo_url: photo, price: price ?? (kind === "fatia" ? samePrice : 0), slices_total: 0, sold: 0 },
+        ],
       };
     });
   }
@@ -415,7 +448,7 @@ export default function FestivalPage() {
           status: d.status,
           counter_reserve_pct: d.counter_reserve_pct,
           max_per_order: d.max_per_order,
-          items: d.items.map(({ id, flavor, photo_url, price, slices_total }) => ({ id, flavor, photo_url, price, slices_total })),
+          items: d.items.map(({ id, kind, flavor, photo_url, price, slices_total }) => ({ id, kind: kind ?? "fatia", flavor, photo_url, price, slices_total })),
         }),
       });
       setDirty(false);
@@ -477,9 +510,8 @@ export default function FestivalPage() {
 
   const flavorsNotInMenu = flavors.filter((f) => !(draft?.items ?? []).some((i) => i.flavor.toLowerCase() === f.name.toLowerCase()));
 
-  return (
-    <AppShell title="Festival ao vivo">
-      <div className="mx-auto max-w-6xl space-y-5">
+  const content = (
+      <div className={`mx-auto space-y-5 ${kiosk ? "max-w-none" : "max-w-6xl"}`}>
         {/* Data + abas */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
@@ -503,7 +535,9 @@ export default function FestivalPage() {
               aria-label="Outra data"
             />
           </div>
-          <div className="flex rounded-xl border border-neutral-800 bg-neutral-950 p-1 text-sm">
+          <div className="flex items-center gap-2">
+          {kiosk && <span className="hidden whitespace-nowrap text-lg font-bold xl:inline">PDV · Winner Cakes</span>}
+          <div className={`flex rounded-xl border border-neutral-800 bg-neutral-950 p-1 ${kiosk ? "text-base" : "text-sm"}`}>
             {(["vender", "retirada", "cardapio", "resumo"] as Tab[]).map((t) => (
               <button
                 key={t}
@@ -513,6 +547,17 @@ export default function FestivalPage() {
                 {t === "vender" ? "Vender" : t === "retirada" ? "Retirada" : t === "cardapio" ? "Cardápio do dia" : "Resumo"}
               </button>
             ))}
+          </div>
+          <button
+            onClick={toggleKiosk}
+            title={kiosk ? "Sair da tela cheia" : "Tela cheia (PDV)"}
+            className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium ${kiosk ? "border-neutral-600 text-neutral-200" : "border-blue-600 bg-blue-600/15 text-blue-200"}`}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-4 w-4">
+              {kiosk ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
+            </svg>
+            <span className="hidden sm:inline">{kiosk ? "Sair da tela cheia" : "Tela cheia"}</span>
+          </button>
           </div>
         </div>
 
@@ -590,51 +635,66 @@ export default function FestivalPage() {
         {state && tab === "vender" && (
           items.filter((i) => i.slices_total > 0).length === 0 ? (
             <div className="rounded-xl border border-neutral-800 p-6 text-center text-neutral-300">
-              <p>Nenhum sabor com fatias cadastradas para este dia.</p>
+              <p>Nada no cardápio deste dia ainda (fatias ou bebidas com quantidade).</p>
               <button onClick={() => setTab("cardapio")} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium">
                 Montar o cardápio do dia
               </button>
             </div>
           ) : (
             <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-              <div className="grid content-start grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                {items
-                  .filter((i) => i.slices_total > 0)
-                  .map((it) => {
-                    const l = left(it);
-                    const inCart = cart[it.id] ?? 0;
-                    const out = l === 0;
-                    return (
-                      <button
-                        key={it.id}
-                        onClick={() => add(it, 1)}
-                        disabled={out || inCart >= l}
-                        className={`relative flex h-36 flex-col justify-end overflow-hidden rounded-2xl border p-3 text-left transition active:scale-[0.97] ${
-                          out ? "border-neutral-800 opacity-40" : inCart > 0 ? "border-blue-500 ring-2 ring-blue-500" : "border-neutral-700"
-                        }`}
-                      >
-                        {it.photo_url && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={imgSrc(it.photo_url, IMG_WIDTH.thumb)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-45" />
-                        )}
-                        <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
-                        <span
-                          className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-xs font-bold ${
-                            out ? "bg-neutral-700 text-white" : l <= 3 ? "bg-red-600 text-white" : "bg-white text-neutral-900"
-                          }`}
-                        >
-                          {out ? "Esgotado" : `${l} ${l === 1 ? "fatia" : "fatias"}`}
-                        </span>
-                        {inCart > 0 && (
-                          <span className="absolute left-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
-                            {inCart}
-                          </span>
-                        )}
-                        <span className="relative text-base font-semibold leading-tight text-white">{it.flavor}</span>
-                        <span className="relative text-sm text-neutral-200">{formatBRL(it.price)}</span>
-                      </button>
-                    );
-                  })}
+              <div className="space-y-5">
+                {(
+                  [
+                    ["fatia", "Fatias"],
+                    ["produto", "Bebidas e outros"],
+                  ] as const
+                ).map(([kind, label]) => {
+                  const list = items.filter((i) => (i.kind ?? "fatia") === kind && i.slices_total > 0);
+                  if (list.length === 0) return null;
+                  return (
+                    <div key={kind} className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">{label}</p>
+                      <div className={`grid content-start gap-3 ${kiosk ? "grid-cols-3 xl:grid-cols-5" : "grid-cols-2 sm:grid-cols-3 xl:grid-cols-4"}`}>
+                        {list.map((it) => {
+                          const l = left(it);
+                          const inCart = cart[it.id] ?? 0;
+                          const out = l === 0;
+                          const product = kind === "produto";
+                          return (
+                            <button
+                              key={it.id}
+                              onClick={() => add(it, 1)}
+                              disabled={out || inCart >= l}
+                              className={`relative flex ${product ? "h-28" : "h-36"} flex-col justify-end overflow-hidden rounded-2xl border p-3 text-left transition active:scale-[0.97] ${
+                                out ? "border-neutral-800 opacity-40" : inCart > 0 ? "border-blue-500 ring-2 ring-blue-500" : "border-neutral-700"
+                              } ${product && !it.photo_url ? "bg-gradient-to-br from-sky-900 to-neutral-900" : ""}`}
+                            >
+                              {it.photo_url && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={imgSrc(it.photo_url, IMG_WIDTH.thumb)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-45" />
+                              )}
+                              <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                              <span
+                                className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-xs font-bold ${
+                                  out ? "bg-neutral-700 text-white" : l <= 3 ? "bg-red-600 text-white" : "bg-white text-neutral-900"
+                                }`}
+                              >
+                                {out ? "Esgotado" : unitLabel(it.kind, l)}
+                              </span>
+                              {inCart > 0 && (
+                                <span className="absolute left-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                                  {inCart}
+                                </span>
+                              )}
+                              <span className="relative text-base font-semibold leading-tight text-white">{it.flavor}</span>
+                              <span className="relative text-sm text-neutral-200">{formatBRL(it.price)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Pedido */}
@@ -660,7 +720,7 @@ export default function FestivalPage() {
                   </ul>
                 )}
                 <div className="flex items-baseline justify-between border-t border-neutral-800 pt-3">
-                  <span className="text-sm text-neutral-400">{cartSlices} {cartSlices === 1 ? "fatia" : "fatias"}</span>
+                  <span className="text-sm text-neutral-400">{cartSlices} {cartSlices === 1 ? "item" : "itens"}</span>
                   <span className="text-2xl font-bold">{formatBRL(cartTotal)}</span>
                 </div>
 
@@ -813,7 +873,7 @@ export default function FestivalPage() {
         {draft && tab === "cardapio" && (
           <div className="space-y-4">
             <p className="text-sm text-neutral-400">
-              Coloque quantas fatias de cada sabor vão para o festival. Durante as vendas você pode aumentar (chegou mais um bolo) — o que já foi vendido continua contado.
+              Coloque quantas fatias de cada sabor e quantas unidades de cada bebida/produto vão para o festival. Durante as vendas você pode aumentar (chegou mais um bolo) — o que já foi vendido continua contado.
             </p>
             <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-300">
               Cada bolo rende
@@ -827,86 +887,145 @@ export default function FestivalPage() {
               fatias (usado no botão “+ 1 bolo”).
             </div>
 
-            <div className="space-y-2">
-              {draft.items.map((it) => (
-                <div key={it.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950/50 p-3">
-                  {it.photo_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={imgSrc(it.photo_url, IMG_WIDTH.thumb)} alt="" className="h-12 w-12 rounded-lg object-cover" />
-                  ) : (
-                    <span className="h-12 w-12 rounded-lg bg-neutral-800" />
+            {(["fatia", "produto"] as const).map((kind) => {
+              const rows = draft.items.filter((i) => (i.kind ?? "fatia") === kind);
+              const product = kind === "produto";
+              return (
+                <div key={kind} className="space-y-2">
+                  <p className="pt-2 text-sm font-semibold text-white">{product ? "Bebidas e outros produtos" : "Fatias"}</p>
+                  {product && rows.length === 0 && (
+                    <p className="text-xs text-neutral-500">Refrigerante, suco, água, café, docinhos… com preço e quantidade que você levou.</p>
                   )}
-                  <input
-                    value={it.flavor}
-                    onChange={(e) => editItem(it.id, { flavor: e.target.value })}
-                    className="min-w-[160px] flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-                  />
-                  <label className="flex items-center gap-1 text-xs text-neutral-400">
-                    R$
-                    <input
-                      inputMode="decimal"
-                      value={String(it.price)}
-                      onChange={(e) => editItem(it.id, { price: Math.max(0, Number(e.target.value.replace(",", ".")) || 0) })}
-                      className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm text-white"
-                    />
-                  </label>
-                  <label className="flex items-center gap-1 text-xs text-neutral-400">
-                    Fatias
-                    <input
-                      type="number"
-                      min={it.sold}
-                      value={it.slices_total}
-                      onChange={(e) => editItem(it.id, { slices_total: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                      className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm text-white"
-                    />
-                  </label>
-                  <button
-                    onClick={() => editItem(it.id, { slices_total: it.slices_total + slicesPerCake })}
-                    className="rounded-lg border border-neutral-700 px-3 py-2 text-xs"
-                  >
-                    + 1 bolo
-                  </button>
-                  <span className="w-28 text-xs text-neutral-400">
-                    {it.sold > 0 ? `${it.sold} vendidas · ${remaining(it)} restam` : "nenhuma vendida"}
-                  </span>
-                  <button
-                    onClick={() => editDraft((d) => ({ ...d, items: d.items.filter((x) => x.id !== it.id) }))}
-                    disabled={it.sold > 0}
-                    title={it.sold > 0 ? "Já tem vendas deste sabor" : "Tirar do cardápio"}
-                    className="text-sm text-red-400 disabled:opacity-30"
-                  >
-                    Remover
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {flavorsNotInMenu.length > 0 && (
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const f = flavors.find((x) => x.name === e.target.value);
-                    if (f) addFlavor(f.name, f.photo_url);
-                  }}
-                  className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-                >
-                  <option value="">+ Sabor cadastrado na loja…</option>
-                  {flavorsNotInMenu.map((f) => (
-                    <option key={f.name} value={f.name}>{f.name}</option>
+                  {rows.map((it) => (
+                    <div key={it.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950/50 p-3">
+                      {it.photo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={imgSrc(it.photo_url, IMG_WIDTH.thumb)} alt="" className="h-12 w-12 rounded-lg object-cover" />
+                      ) : (
+                        <span className={`h-12 w-12 rounded-lg ${product ? "bg-gradient-to-br from-sky-900 to-neutral-800" : "bg-neutral-800"}`} />
+                      )}
+                      <input
+                        value={it.flavor}
+                        onChange={(e) => editItem(it.id, { flavor: e.target.value })}
+                        className="min-w-[160px] flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                      />
+                      <label className="flex items-center gap-1 text-xs text-neutral-400">
+                        R$
+                        <input
+                          inputMode="decimal"
+                          value={String(it.price)}
+                          onChange={(e) => editItem(it.id, { price: Math.max(0, Number(e.target.value.replace(",", ".")) || 0) })}
+                          className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm text-white"
+                        />
+                      </label>
+                      <label className="flex items-center gap-1 text-xs text-neutral-400">
+                        {product ? "Qtd." : "Fatias"}
+                        <input
+                          type="number"
+                          min={it.sold}
+                          value={it.slices_total}
+                          onChange={(e) => editItem(it.id, { slices_total: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                          className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm text-white"
+                        />
+                      </label>
+                      {product ? (
+                        <button onClick={() => editItem(it.id, { slices_total: it.slices_total + 6 })} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs">
+                          + 6
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => editItem(it.id, { slices_total: it.slices_total + slicesPerCake })}
+                          className="rounded-lg border border-neutral-700 px-3 py-2 text-xs"
+                        >
+                          + 1 bolo
+                        </button>
+                      )}
+                      <span className="w-28 text-xs text-neutral-400">
+                        {it.sold > 0 ? `${it.sold} vendid${product ? "os" : "as"} · ${remaining(it)} restam` : product ? "nenhum vendido" : "nenhuma vendida"}
+                      </span>
+                      <button
+                        onClick={() => editDraft((d) => ({ ...d, items: d.items.filter((x) => x.id !== it.id) }))}
+                        disabled={it.sold > 0}
+                        title={it.sold > 0 ? "Já tem vendas deste item" : "Tirar do cardápio"}
+                        className="text-sm text-red-400 disabled:opacity-30"
+                      >
+                        Remover
+                      </button>
+                    </div>
                   ))}
-                </select>
-              )}
-              <button
-                onClick={() => {
-                  const name = window.prompt("Nome do sabor");
-                  if (name) addFlavor(name);
-                }}
-                className="rounded-lg border border-neutral-700 px-3 py-2 text-sm"
-              >
-                + Outro sabor
-              </button>
-            </div>
+                  {product ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!newProd.name.trim()) return;
+                        const price = Math.max(0, Number(newProd.price.replace(",", ".")) || 0);
+                        const qty = Math.max(0, Math.floor(Number(newProd.qty) || 0));
+                        const used = new Set(draft.items.map((i) => i.id));
+                        const id = slugId(newProd.name, used);
+                        editDraft((d) => ({
+                          ...d,
+                          items: [...d.items, { id, kind: "produto", flavor: newProd.name.trim(), photo_url: "", price, slices_total: qty, sold: 0 }],
+                        }));
+                        setNewProd({ name: "", price: "", qty: "" });
+                      }}
+                      className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-neutral-700 p-3"
+                    >
+                      <input
+                        value={newProd.name}
+                        onChange={(e) => setNewProd((p) => ({ ...p, name: e.target.value }))}
+                        placeholder="Nome (ex.: Coca-Cola lata 350 ml)"
+                        className="min-w-[200px] flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                      />
+                      <input
+                        inputMode="decimal"
+                        value={newProd.price}
+                        onChange={(e) => setNewProd((p) => ({ ...p, price: e.target.value }))}
+                        placeholder="Preço R$"
+                        className="w-24 rounded border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        value={newProd.qty}
+                        onChange={(e) => setNewProd((p) => ({ ...p, qty: e.target.value }))}
+                        placeholder="Qtd."
+                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm"
+                      />
+                      <button disabled={!newProd.name.trim()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium disabled:opacity-40">
+                        + Adicionar produto
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {flavorsNotInMenu.length > 0 && (
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const f = flavors.find((x) => x.name === e.target.value);
+                            if (f) addFlavor(f.name, f.photo_url);
+                          }}
+                          className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+                        >
+                          <option value="">+ Sabor cadastrado na loja…</option>
+                          {flavorsNotInMenu.map((f) => (
+                            <option key={f.name} value={f.name}>{f.name}</option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        onClick={() => {
+                          const name = window.prompt("Nome do sabor");
+                          if (name) addFlavor(name);
+                        }}
+                        className="rounded-lg border border-neutral-700 px-3 py-2 text-sm"
+                      >
+                        + Outro sabor
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
             <div className="space-y-4 rounded-xl border border-neutral-800 p-4 text-sm text-neutral-300">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1071,8 +1190,12 @@ export default function FestivalPage() {
           </div>
         )}
       </div>
-    </AppShell>
   );
+
+  if (kiosk) {
+    return <div className="min-h-screen p-3 sm:p-5">{content}</div>;
+  }
+  return <AppShell title="Festival ao vivo">{content}</AppShell>;
 }
 
 function OrdersList({ orders, title }: { orders: FestivalOnlineOrder[]; title: string }) {

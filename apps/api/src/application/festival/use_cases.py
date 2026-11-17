@@ -90,6 +90,12 @@ def _online_left(
     return max(0, min(_counter_left(item, held), cap - used))
 
 
+def _unit(item: FestivalLiveItemState, n: int) -> str:
+    if item.kind == "produto":
+        return "unidade" if n == 1 else "unidades"
+    return "fatia" if n == 1 else "fatias"
+
+
 def _slug_id(name: str, used: set[str]) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] or "sabor"
     candidate, n = base, 2
@@ -192,7 +198,7 @@ def create_sale(
                     raise InsufficientStockError(f"{item.flavor} esgotou.")
                 raise InsufficientStockError(
                     f"Só {'resta' if remaining == 1 else 'restam'} {remaining} "
-                    f"{'fatia' if remaining == 1 else 'fatias'} de {item.flavor}."
+                    f"{_unit(item, remaining)} de {item.flavor}."
                 )
         lines = []
         for item_id, qty in wanted.items():
@@ -266,6 +272,7 @@ def get_public_live(db: Session, *, slug: str) -> PublicFestivalLiveResponse:
             items=[
                 PublicFestivalLiveItem(
                     id=i.id,
+                    kind=i.kind,
                     flavor=i.flavor,
                     photo_url=i.photo_url,
                     price=i.price,
@@ -420,7 +427,8 @@ def create_online_order(
             if line.item_id not in items:
                 raise InsufficientStockError("Um dos sabores não está mais no cardápio.")
             wanted[line.item_id] = wanted.get(line.item_id, 0) + line.qty
-        if sum(wanted.values()) > state.max_per_order:
+        slices = sum(q for i, q in wanted.items() if items[i].kind == "fatia")
+        if slices > state.max_per_order:
             raise FestivalOrderError(f"Máximo de {state.max_per_order} fatias por pedido.")
         held = _held(state, now)
         for item_id, qty in wanted.items():

@@ -1263,6 +1263,9 @@ class FestivalLiveItem(BaseModel):
     """Um sabor do cardápio do festival, com quantas fatias foram preparadas."""
 
     id: str = Field(min_length=1, max_length=40, pattern=_FESTIVAL_ID)
+    # "fatia" (sabor de bolo, conta fatias) ou "produto" (refrigerante, suco...,
+    # conta unidades). Para produto, slices_total é a quantidade em estoque.
+    kind: Literal["fatia", "produto"] = "fatia"
     flavor: str = Field(min_length=1, max_length=80)
     photo_url: str = Field(default="", max_length=2000)
     price: float = Field(default=0, ge=0, le=10000)
@@ -1360,6 +1363,7 @@ class FestivalLiveState(BaseModel):
 
 class PublicFestivalLiveItem(BaseModel):
     id: str = ""
+    kind: str = "fatia"
     flavor: str
     photo_url: str = ""
     price: float = 0
