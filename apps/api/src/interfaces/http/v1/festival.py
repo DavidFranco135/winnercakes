@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.application.festival import use_cases
@@ -122,6 +123,25 @@ def refund_festival_order(
     return _run(
         lambda: use_cases.refund_order(
             db, organization_id=organization_id, day=day, order_id=order_id
+        )
+    )
+
+
+class _OnlineToggle(BaseModel):
+    enabled: bool
+
+
+@router.post(
+    "/{day}/online",
+    response_model=FestivalLiveState,
+    dependencies=[Depends(require_pdv_or_role(Role.OPERATOR))],
+)
+def toggle_online(
+    organization_id: UUID, day: str, payload: _OnlineToggle, db: Session = Depends(get_db)
+) -> FestivalLiveState:
+    return _run(
+        lambda: use_cases.set_online(
+            db, organization_id=organization_id, day=day, enabled=payload.enabled
         )
     )
 

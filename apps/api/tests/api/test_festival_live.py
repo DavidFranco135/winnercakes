@@ -389,3 +389,17 @@ def test_staff_only_reaches_pdv(client: TestClient, online):
     assert client.delete(f"/api/v1/organizations/{org}/staff/{staff_id}", headers=headers).status_code == 204
     r = client.post("/api/v1/auth/login", json={"email": "joana@doces.io", "password": "senha-forte-1"})
     assert r.status_code in (401, 403)
+
+
+def test_staff_can_pause_online(client: TestClient, online):
+    base, headers, org = online["base"], online["headers"], online["org"]
+    client.post(
+        f"/api/v1/organizations/{org}/staff",
+        json={"full_name": "Joana", "email": "joana2@doces.io", "password": "senha-forte-1"},
+        headers=headers,
+    )
+    tok = client.post("/api/v1/auth/login", json={"email": "joana2@doces.io", "password": "senha-forte-1"}).json()["access_token"]
+    r = client.post(f"{base}/online", json={"enabled": False}, headers=auth_headers(tok))
+    assert r.status_code == 200 and r.json()["online_enabled"] is False
+    live = client.get(f"/api/v1/public/stores/{online['slug']}/festival-live").json()["live"]
+    assert live["online_enabled"] is False

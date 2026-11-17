@@ -428,6 +428,26 @@ export default function FestivalPage() {
     [accessToken, orgPath, day, load]
   );
 
+  // Caixa pausa/religa a venda pelo celular olhando o tamanho da fila.
+  async function setOnline(enabled: boolean) {
+    if (!accessToken) return;
+    try {
+      const data = await apiFetch<FestivalState>(`${orgPath}/festival-live/${day}/online`, {
+        method: "POST",
+        accessToken,
+        body: JSON.stringify({ enabled }),
+      });
+      setState(data);
+      setToast({
+        title: enabled ? "Venda pelo celular ligada" : "Venda pelo celular pausada",
+        detail: enabled ? "Quem está na fila volta a poder pagar pelo celular." : "Agora só vende no balcão/vitrine.",
+        tone: "ok",
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Sem conexão agora.");
+    }
+  }
+
   async function refundOrder(o: FestivalOnlineOrder) {
     if (!accessToken) return;
     if (!window.confirm(`Devolver o Pix de ${formatBRL(o.total)} para ${o.name} (${o.code})? O pedido fica cancelado.`)) return;
@@ -729,6 +749,26 @@ export default function FestivalPage() {
           <p className="rounded-lg bg-amber-950 p-2 text-sm text-amber-300">
             Há pedido pago pelo celular sem fatia disponível (o Pix caiu depois do prazo e o sabor esgotou). Devolva o Pix pelo app do Mercado Pago — veja em Resumo.
           </p>
+        )}
+
+        {state && (tab === "vender" || tab === "retirada") && (state.online_enabled || (state.orders ?? []).length > 0) && (
+          <div className={`flex flex-wrap items-center gap-3 rounded-xl border p-3 ${state.online_enabled ? "border-emerald-800 bg-emerald-950/40" : "border-neutral-700 bg-neutral-900/60"}`}>
+            <span className={`h-3 w-3 rounded-full ${state.online_enabled ? "animate-pulse bg-emerald-400" : "bg-neutral-500"}`} />
+            <span className="min-w-0 flex-1 text-sm sm:text-base">
+              <strong>Venda pelo celular {state.online_enabled ? "ligada" : "pausada"}</strong>
+              <span className="block text-xs text-neutral-400 sm:text-sm">
+                Livres na vitrine: {Math.max(0, items.filter((i) => (i.kind ?? "fatia") === "fatia").reduce((n, i) => n + Math.max(0, remaining(i) - (held[i.id] ?? 0)), 0) - reservedCredits)} ·
+                pagas pelo celular a retirar: {reservedCredits}
+                {state.online_enabled ? " · fila grande perto do fim? Pause." : ""}
+              </span>
+            </span>
+            <button
+              onClick={() => setOnline(!state.online_enabled)}
+              className={`rounded-xl px-4 py-2.5 text-sm font-bold ${state.online_enabled ? "bg-amber-500 text-neutral-950" : "bg-emerald-600 text-white"}`}
+            >
+              {state.online_enabled ? "Pausar celular" : "Religar celular"}
+            </button>
+          </div>
         )}
 
         {pending.length > 0 && (

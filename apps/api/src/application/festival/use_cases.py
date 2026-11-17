@@ -837,3 +837,14 @@ def refund_order(
         o.refunded_at = _now_iso()
 
     return _mutate(db, organization_id, day, change)
+
+
+def set_online(db: Session, *, organization_id: UUID, day: str, enabled: bool) -> FestivalLiveState:
+    """Liga/pausa a venda pelo celular na hora (o caixa vê o tamanho da fila)."""
+
+    def change(state: FestivalLiveState) -> None:
+        state.online_enabled = enabled
+
+    state = _mutate(db, organization_id, day, change)
+    _public_cache.clear()
+    return state
