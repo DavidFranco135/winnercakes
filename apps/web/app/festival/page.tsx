@@ -99,6 +99,8 @@ export default function FestivalPage() {
   const [saving, setSaving] = useState(false);
   const [slicesPerCake, setSlicesPerCake] = useState(16);
   const [newProd, setNewProd] = useState({ name: "", price: "", qty: "" });
+  // Tela cheia: só produtos e pagamento; o resto fica em "Opções".
+  const [showDetails, setShowDetails] = useState(false);
   // Modo PDV em tela cheia (sem menu lateral). Fica lembrado no aparelho.
   const [kiosk, setKiosk] = useState<boolean>(() => {
     try {
@@ -642,6 +644,46 @@ export default function FestivalPage() {
             </div>
           </div>
         )}
+        {/* Tela cheia: uma linha só com as abas, "Opções" e Sair. */}
+        {kiosk && (
+          <div className="flex items-center gap-2">
+            <div className={`grid min-w-0 flex-1 ${isStaff ? "grid-cols-3" : "grid-cols-4"} gap-1 rounded-xl border border-neutral-800 bg-neutral-950 p-1 text-sm sm:text-lg`}>
+              {(isStaff ? (["vender", "retirada", "resumo"] as Tab[]) : (["vender", "retirada", "cardapio", "resumo"] as Tab[])).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`relative flex flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 font-semibold leading-tight sm:flex-row sm:gap-2 sm:py-3 ${tab === t ? "bg-blue-600 text-white" : "text-neutral-400"}`}
+                >
+                  <span className="text-lg leading-none sm:text-xl">{t === "vender" ? "🛒" : t === "retirada" ? "🎟️" : t === "cardapio" ? "📋" : "📊"}</span>
+                  <span className="text-[11px] sm:text-lg">{t === "vender" ? "Vender" : t === "retirada" ? "Retirada" : t === "cardapio" ? "Cardápio" : "Resumo"}</span>
+                  {t === "retirada" && paidWaiting > 0 && (
+                    <span className="absolute right-1 top-1 rounded-full bg-emerald-500 px-1.5 text-[10px] text-white sm:static sm:text-xs">{paidWaiting}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowDetails((v) => !v)}
+              aria-label="Opções"
+              aria-expanded={showDetails}
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-xl ${showDetails ? "border-blue-500 bg-blue-600/20" : "border-neutral-700"}`}
+            >
+              ⋯
+            </button>
+            <button
+              onClick={toggleKiosk}
+              aria-label="Sair da tela cheia"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-neutral-700"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-5 w-5">
+                <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {(!kiosk || showDetails) && (
+        <>
         {/* Data + abas: quebra em linhas no celular/tablet, nada de rolar para o lado */}
         <div className="flex flex-wrap items-center gap-2">
           {kiosk && <span className="mr-2 whitespace-nowrap text-xl font-bold">PDV · Winner Cakes</span>}
@@ -664,6 +706,7 @@ export default function FestivalPage() {
             className="hidden rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-2.5 text-sm sm:block"
             aria-label="Outra data"
           />
+          {!kiosk && (
           <button
             onClick={toggleKiosk}
             title={kiosk ? "Sair da tela cheia" : "Tela cheia (PDV)"}
@@ -674,7 +717,9 @@ export default function FestivalPage() {
             </svg>
             <span>{kiosk ? "Sair" : "Tela cheia"}</span>
           </button>
+          )}
         </div>
+        {!kiosk && (
         <div className={`grid ${isStaff ? "grid-cols-3" : "grid-cols-4"} gap-1 rounded-xl border border-neutral-800 bg-neutral-950 p-1 ${kiosk ? "text-lg" : "text-sm sm:text-base"}`}>
           {(isStaff ? (["vender", "retirada", "resumo"] as Tab[]) : (["vender", "retirada", "cardapio", "resumo"] as Tab[])).map((t) => (
             <button
@@ -689,6 +734,7 @@ export default function FestivalPage() {
             </button>
           ))}
         </div>
+        )}
 
         {festivalOfDay && (
           <p className="text-sm text-neutral-400">
@@ -746,12 +792,6 @@ export default function FestivalPage() {
             </label>
           </div>
         )}
-        {(state?.orders ?? []).some((o) => o.status === "pago_sem_estoque") && (
-          <p className="rounded-lg bg-amber-950 p-2 text-sm text-amber-300">
-            Há pedido pago pelo celular sem fatia disponível (o Pix caiu depois do prazo e o sabor esgotou). A dona devolve o Pix pela aba Retirada (lista de pagos).
-          </p>
-        )}
-
         {state && (tab === "vender" || tab === "retirada") && (state.online_enabled || (state.orders ?? []).length > 0) && (
           <div className={`flex flex-wrap items-center gap-3 rounded-xl border p-3 ${state.online_enabled ? "border-emerald-800 bg-emerald-950/40" : "border-neutral-700 bg-neutral-900/60"}`}>
             <span className={`h-3 w-3 rounded-full ${state.online_enabled ? "animate-pulse bg-emerald-400" : "bg-neutral-500"}`} />
@@ -770,6 +810,15 @@ export default function FestivalPage() {
               {state.online_enabled ? "Pausar celular" : "Religar celular"}
             </button>
           </div>
+        )}
+
+        </>
+        )}
+
+        {(state?.orders ?? []).some((o) => o.status === "pago_sem_estoque") && (
+          <p className="rounded-lg bg-amber-950 p-2 text-sm text-amber-300">
+            Há pedido pago pelo celular sem fatia disponível (o Pix caiu depois do prazo e o sabor esgotou). A dona devolve o Pix pela aba Retirada (lista de pagos).
+          </p>
         )}
 
         {pending.length > 0 && (
@@ -814,7 +863,7 @@ export default function FestivalPage() {
                   return (
                     <div key={kind} className="space-y-2">
                       <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">{label}</p>
-                      <div className={`grid content-start gap-3 ${kiosk ? "grid-cols-3 xl:grid-cols-5" : "grid-cols-2 sm:grid-cols-3 xl:grid-cols-4"}`}>
+                      <div className={`grid content-start gap-3 ${kiosk ? "grid-cols-2 sm:grid-cols-3 xl:grid-cols-5" : "grid-cols-2 sm:grid-cols-3 xl:grid-cols-4"}`}>
                         {list.map((it) => {
                           const l = left(it);
                           const inCart = cart[it.id] ?? 0;
@@ -846,7 +895,7 @@ export default function FestivalPage() {
                                   {inCart}
                                 </span>
                               )}
-                              <span className={`relative font-semibold leading-tight text-white ${kiosk ? "text-xl" : "text-base"}`}>{it.flavor}</span>
+                              <span className={`relative line-clamp-2 font-semibold leading-tight text-white ${kiosk ? "text-lg sm:text-xl" : "text-base"}`}>{it.flavor}</span>
                               <span className={`relative text-neutral-200 ${kiosk ? "text-base" : "text-sm"}`}>{formatBRL(it.price)}</span>
                             </button>
                           );
