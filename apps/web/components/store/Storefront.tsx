@@ -1437,14 +1437,23 @@ export function Storefront({ slug }: { slug: string }) {
         <div className="border-t border-[var(--footer-line)]">
           <div className="mx-auto flex max-w-[1600px] flex-col items-center justify-between gap-2 px-4 py-5 text-xs sm:flex-row sm:px-6 lg:px-10">
             <p>
-              © {new Date().getFullYear()} {storeName}. Todos os direitos reservados.
+              © {new Date().getFullYear()}{" "}
+              {/* Acesso à área interna: o nome da loja parece texto comum, mas leva ao login. */}
+              <Link href="/login" className="cursor-text text-inherit no-underline">
+                {storeName}
+              </Link>
+              . Todos os direitos reservados.
             </p>
             <p>
               Produzido por{" "}
-              {/* Acesso à área interna: parece texto comum, mas leva ao login. */}
-              <Link href="/login" className="cursor-text font-semibold tracking-[0.15em] text-inherit no-underline">
+              <a
+                href="https://systems-niklaus.pages.dev/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold tracking-[0.15em] text-inherit underline-offset-4 hover:underline"
+              >
                 NIKLAUS
-              </Link>
+              </a>
             </p>
           </div>
         </div>
