@@ -115,9 +115,9 @@ def redeem_festival_ticket(
 @router.post(
     "/{day}/orders/{order_id}/refund",
     response_model=FestivalLiveState,
-    dependencies=[Depends(require_pdv_or_role(Role.OPERATOR))],
+    dependencies=[Depends(require_org_role(Role.OWNER))],
 )
-def refund_festival_order(
+def refund_festival_order(  # só a dona devolve Pix
     organization_id: UUID, day: str, order_id: str, db: Session = Depends(get_db)
 ) -> FestivalLiveState:
     return _run(

@@ -399,6 +399,8 @@ def test_staff_can_pause_online(client: TestClient, online):
         headers=headers,
     )
     tok = client.post("/api/v1/auth/login", json={"email": "joana2@doces.io", "password": "senha-forte-1"}).json()["access_token"]
+    # Funcionário não devolve Pix (só a dona).
+    assert client.post(f"{base}/orders/qualquer/refund", headers=auth_headers(tok)).status_code == 403
     r = client.post(f"{base}/online", json={"enabled": False}, headers=auth_headers(tok))
     assert r.status_code == 200 and r.json()["online_enabled"] is False
     live = client.get(f"/api/v1/public/stores/{online['slug']}/festival-live").json()["live"]

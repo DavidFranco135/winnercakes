@@ -81,6 +81,7 @@ export default function FestivalPage() {
   const myRole = organizations.find((m) => m.organization.id === currentOrganizationId)?.role;
   const isStaff = myRole === "CAIXA";
   const canManage = myRole === "OWNER" || myRole === "ADMIN" || myRole === "MANAGER";
+  const canRefund = myRole === "OWNER"; // devolver Pix: só a dona
   const router = useRouter();
   const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
 
@@ -747,7 +748,7 @@ export default function FestivalPage() {
         )}
         {(state?.orders ?? []).some((o) => o.status === "pago_sem_estoque") && (
           <p className="rounded-lg bg-amber-950 p-2 text-sm text-amber-300">
-            Há pedido pago pelo celular sem fatia disponível (o Pix caiu depois do prazo e o sabor esgotou). Devolva o Pix pelo app do Mercado Pago — veja em Resumo.
+            Há pedido pago pelo celular sem fatia disponível (o Pix caiu depois do prazo e o sabor esgotou). A dona devolve o Pix pela aba Retirada (lista de pagos).
           </p>
         )}
 
@@ -1041,13 +1042,19 @@ export default function FestivalPage() {
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-2 border-t border-white/20 pt-3">
-                        <button
-                          onClick={() => refundOrder(o)}
-                          disabled={refunding}
-                          className="rounded-xl bg-red-600 px-4 py-3 text-base font-semibold disabled:opacity-40"
-                        >
-                          {refunding ? "Devolvendo…" : "Não gostou de nenhum · Devolver Pix"}
-                        </button>
+                        {canRefund ? (
+                          <button
+                            onClick={() => refundOrder(o)}
+                            disabled={refunding}
+                            className="rounded-xl bg-red-600 px-4 py-3 text-base font-semibold disabled:opacity-40"
+                          >
+                            {refunding ? "Devolvendo…" : "Não gostou de nenhum · Devolver Pix"}
+                          </button>
+                        ) : (
+                          <p className="rounded-xl bg-white/10 px-4 py-3 text-sm">
+                            Não gostou de nenhum sabor? <strong>Chame a dona</strong> — só ela devolve o Pix.
+                          </p>
+                        )}
                         <button onClick={() => setRedeemResult(null)} className="ml-auto rounded-xl bg-white/15 px-4 py-3 text-base">
                           Voltar
                         </button>
@@ -1099,7 +1106,7 @@ export default function FestivalPage() {
               <OrdersList
                 orders={(state.orders ?? []).filter((o) => o.status === "pago" || o.status === "pago_sem_estoque")}
                 title="Pagos esperando retirada"
-                onRefund={refundOrder}
+                onRefund={canRefund ? refundOrder : undefined}
               />
             </div>
           </div>
