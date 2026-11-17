@@ -209,7 +209,16 @@ def save_config(
             items.append(
                 FestivalLiveItemState(**item.model_dump(), sold=sold, sold_online=sold_online)
             )
+        # Diminuir o estoque não pode deixar ticket pago pelo celular sem fatia.
+        before = state.items
         state.items = items
+        outstanding = _credits_outstanding(state)
+        if outstanding and _slices_left(state, _held(state)) < outstanding:
+            state.items = before
+            raise InsufficientStockError(
+                f"Há {outstanding} fatia(s) já paga(s) pelo celular esperando retirada; "
+                "o total de fatias não pode ficar abaixo disso."
+            )
         state.public_enabled = config.public_enabled
         state.online_enabled = config.online_enabled
         state.online_mode = config.online_mode
