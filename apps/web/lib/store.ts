@@ -176,6 +176,12 @@ export function slideMobileUrl(slide: { url: string; mobile_url?: string }): str
 }
 
 export const BRICK_TEXTURE = "/brand/textura-tijolos-cor.webp";
+// Fotos de fundo já salvas que têm texto/ícones na parte de baixo (print de
+// busca de imagens com "Acessar o site"): fração da altura a esconder.
+const PHOTO_CROP_BOTTOM: Record<string, number> = {
+  "https://i.ibb.co/gFRWqpTs/feb1d8b7aea8.jpg": 0.32,
+};
+
 export function storeBackground(s: {
   background_style?: string;
   background_url?: string;
@@ -190,14 +196,18 @@ export function storeBackground(s: {
   const pct = Math.max(3, Math.min(60, s.background_opacity ?? 18));
   const tiled = style === "tijolos";
   const image = `url("${url.replace(/"/g, "%22")}")`;
+  // Parte de baixo da foto que não deve aparecer (ex.: print com botões/texto).
+  const crop = style === "foto" ? (PHOTO_CROP_BOTTOM[raw] ?? 0) : 0;
   const size = tiled ? "1000px 420px" : "cover";
   const layer: React.CSSProperties = {
     // Mais apagado no centro (onde ficam os textos), mais visível nas bordas.
     backgroundImage: `radial-gradient(ellipse 70% 60% at 50% 45%, color-mix(in srgb, var(--bg) 45%, transparent), transparent 80%), ${image}`,
     backgroundSize: `auto, ${size}`,
     backgroundRepeat: tiled ? "no-repeat, repeat" : "no-repeat, no-repeat",
-    backgroundPosition: "center, center",
+    backgroundPosition: crop ? "center, top" : "center, center",
     opacity: pct / 100,
+    // Camada mais alta que a tela: a faixa de baixo da foto fica fora da vista.
+    ...(crop ? { bottom: `${(-100 * crop) / (1 - crop)}vh` } : {}),
   };
   if (!s.background_header) return { layer };
   // Cabeçalho: a mesma imagem, mais forte, sob um véu creme para o menu ler bem.

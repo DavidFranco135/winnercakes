@@ -14,7 +14,7 @@ import { FeaturedSlider } from "./FeaturedSlider";
 import { SearchOverlay } from "./SearchOverlay";
 import { useStoreFx } from "./fx";
 import { HeroSlider } from "./HeroSlider";
-import { FestivalsSection, nextFestivalNotice } from "./Festivals";
+import { FestivalsSection, LocationsSection, nextFestivalNotice } from "./Festivals";
 import { LiveMenu, useLiveFestival } from "./LiveMenu";
 import { CakeTablesSection, FaqSection, FlavorsSection, GallerySection } from "./Showcase";
 import { SplashIntro } from "./SplashIntro";
@@ -790,6 +790,7 @@ export function Storefront({ slug }: { slug: string }) {
                 <FestivalsSection
                   festivals={settings.festivals}
                   locations={settings.locations}
+                  showLocations={false}
                   note={settings.festival_note}
                   heading={<SectionTitle eyebrow="Toda semana" title={<>Festival de <Em>Fatias</Em></>} />}
                 />
@@ -819,6 +820,13 @@ export function Storefront({ slug }: { slug: string }) {
                   orderLink={(text) => whatsappLink(settings.whatsapp, text)}
                   heading={<SectionTitle eyebrow="Encomendas" title={<>Tabela de <Em>bolos</Em></>} />}
                 />
+
+                <GallerySection
+                  photos={settings.gallery}
+                  heading={<SectionTitle eyebrow="Encomendas e festas" title={<>Nossas <Em>criações</Em></>} />}
+                />
+
+                <LocationsSection locations={settings.locations} />
 
                 {/* Sem barra de busca nem selos aqui: a lupa fica no topo e os selos no rodapé. */}
 
@@ -937,11 +945,6 @@ export function Storefront({ slug }: { slug: string }) {
                   </ul>
                 </section>
               </Reveal>
-
-              <GallerySection
-                photos={settings.gallery}
-                heading={<SectionTitle eyebrow="Encomendas e festas" title={<>Nossas <Em>criações</Em></>} />}
-              />
 
               <FaqSection
                 items={settings.faq}

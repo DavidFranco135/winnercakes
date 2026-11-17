@@ -14,7 +14,9 @@ export function FestivalsSection({
   heading,
   note,
   max = 9,
+  showLocations = true,
 }: {
+  showLocations?: boolean;
   note?: string;
   festivals?: StoreFestival[];
   locations?: StoreLocation[];
@@ -23,7 +25,7 @@ export function FestivalsSection({
 }) {
   const list = upcomingFestivals(festivals).slice(0, max);
   const places = locations ?? [];
-  if (list.length === 0 && places.length === 0) return null;
+  if (list.length === 0 && (places.length === 0 || !showLocations)) return null;
   const [next, ...rest] = list;
 
   return (
@@ -123,7 +125,23 @@ export function FestivalsSection({
         </Reveal>
       )}
 
-      {places.length > 0 && (
+      {showLocations && <LocationsList places={places} />}
+    </section>
+  );
+}
+
+// Texto curto para a faixa do topo: "Próximo festival: qua 18/11 · Bay Market".
+export function nextFestivalNotice(festivals?: StoreFestival[]): string | null {
+  const next = upcomingFestivals(festivals)[0];
+  if (!next) return null;
+  const p = festivalDateParts(next.date);
+  return `Próximo Festival de Fatias: ${p.relative ? p.relative.toLowerCase() : `${p.weekday} ${p.short}`} · ${next.place}`;
+}
+
+// "Onde estamos": locais fixos com o botão "Como chegar".
+export function LocationsList({ places }: { places: StoreLocation[] }) {
+  if (places.length === 0) return null;
+  return (
         <div className="space-y-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--accent-text)]">Onde estamos</p>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -152,15 +170,16 @@ export function FestivalsSection({
             ))}
           </div>
         </div>
-      )}
-    </section>
   );
 }
 
-// Texto curto para a faixa do topo: "Próximo festival: qua 18/11 · Bay Market".
-export function nextFestivalNotice(festivals?: StoreFestival[]): string | null {
-  const next = upcomingFestivals(festivals)[0];
-  if (!next) return null;
-  const p = festivalDateParts(next.date);
-  return `Próximo Festival de Fatias: ${p.relative ? p.relative.toLowerCase() : `${p.weekday} ${p.short}`} · ${next.place}`;
+export function LocationsSection({ locations, heading }: { locations?: StoreLocation[]; heading?: React.ReactNode }) {
+  const places = locations ?? [];
+  if (places.length === 0) return null;
+  return (
+    <section className="space-y-5">
+      {heading && <Reveal>{heading}</Reveal>}
+      <LocationsList places={places} />
+    </section>
+  );
 }
