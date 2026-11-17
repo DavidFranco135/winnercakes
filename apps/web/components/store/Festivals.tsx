@@ -43,7 +43,7 @@ export function FestivalsSection({
             href={festivalMapsUrl(next, places)}
             target="_blank"
             rel="noopener noreferrer"
-            className="fx-festival group relative flex flex-col gap-4 overflow-hidden rounded-[28px] bg-[var(--accent)] p-5 text-[var(--accent-ink)] shadow-[0_30px_70px_-35px_var(--accent)] transition hover:-translate-y-1 sm:flex-row sm:items-center sm:p-9"
+            className="fx-festival fx-card-gleam group relative flex flex-col gap-4 overflow-hidden rounded-[28px] bg-[var(--accent)] p-5 text-[var(--accent-ink)] shadow-[0_30px_70px_-35px_var(--accent)] transition hover:-translate-y-1 sm:flex-row sm:items-center sm:p-9"
           >
             <span className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
             <span className="relative flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-3xl bg-white text-[var(--accent-text)] shadow-lg sm:h-28 sm:w-28">
@@ -72,7 +72,7 @@ export function FestivalsSection({
                 </span>
               )}
             </span>
-            <span className="relative inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-[var(--accent-text)] shadow-lg transition group-hover:shadow-xl">
+            <span className="fx-btn fx-pulse relative inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-[var(--accent-text)] shadow-lg transition group-hover:shadow-xl">
               <IconPin className="h-4 w-4" />
               Como chegar
               <IconArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
@@ -106,7 +106,7 @@ export function FestivalsSection({
                     target="_blank"
                     rel="noopener noreferrer"
                     title={[f.place, f.time, f.note].filter(Boolean).join(" · ")}
-                    className="group flex w-[132px] shrink-0 snap-start flex-col gap-1 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3 transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-lg sm:w-[150px]"
+                    className="fx-spotlight group flex w-[132px] shrink-0 snap-start flex-col gap-1 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3 transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-lg sm:w-[150px]"
                   >
                     <span className="flex items-baseline gap-1.5 text-[var(--accent-text)]">
                       <span className="font-[family-name:var(--font-display)] text-2xl font-bold leading-none">{p.day}</span>
@@ -151,7 +151,7 @@ export function LocationsList({ places }: { places: StoreLocation[] }) {
                   href={locationMapsUrl(l)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="group flex h-full items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--surface)] p-5 transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-lg"
+                  className="fx-spotlight group flex h-full items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--surface)] p-5 transition duration-300 hover:-translate-y-1 hover:border-[var(--accent)] hover:shadow-lg"
                 >
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--accent)] text-[var(--accent-ink)]">
                     <IconPin className="h-6 w-6" />

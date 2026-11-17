@@ -145,7 +145,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
         </p>
       )}
       {qtyMode && !closed && (
-        <div className="fx-festival relative overflow-hidden rounded-[28px] bg-[var(--accent)] p-5 text-[var(--accent-ink)] shadow-[0_24px_60px_-30px_var(--accent)] sm:p-7">
+        <div className="fx-festival fx-card-gleam relative overflow-hidden rounded-[28px] bg-[var(--accent)] p-5 text-[var(--accent-ink)] shadow-[0_24px_60px_-30px_var(--accent)] sm:p-7">
           <span className="pointer-events-none absolute -right-12 -top-16 h-52 w-52 rounded-full bg-white/10 blur-2xl" />
           <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center">
             <div className="min-w-0 flex-1 space-y-1">
@@ -195,7 +195,8 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
           {items.map((it) => (
             <div
               key={it.flavor}
-              className={`relative overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] ${it.sold_out ? "opacity-55" : ""}`}
+              style={{ "--fx-delay": `${(items.indexOf(it) * 1.1) % 7.5}s` } as React.CSSProperties}
+              className={`fx-spotlight relative overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] transition duration-500 hover:-translate-y-1 hover:shadow-xl ${it.sold_out ? "opacity-55" : "fx-card-gleam"}`}
             >
               {it.photo_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -262,7 +263,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
             </span>
             <button
               onClick={() => setCheckout(true)}
-              className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--accent-ink)]"
+              className="fx-btn fx-pulse rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--accent-ink)]"
             >
               Pagar com Pix
             </button>

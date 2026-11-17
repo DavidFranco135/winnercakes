@@ -26,7 +26,10 @@ export function FlavorsSection({
       <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 sm:gap-4 lg:grid-cols-6 xl:grid-cols-7">
         {list.map((f, i) => (
           <Reveal key={`${f.name}-${i}`} delay={(i % 6) * 50}>
-            <div className="group h-full overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] shadow-sm transition duration-500 hover:-translate-y-1 hover:shadow-xl">
+            <div
+              style={{ "--fx-delay": `${(i * 1.3) % 7.5}s` } as React.CSSProperties}
+              className="fx-spotlight fx-card-gleam group h-full overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] shadow-sm transition duration-500 hover:-translate-y-1.5 hover:shadow-xl"
+            >
               {f.photo_url ? (
                 <div className="aspect-square overflow-hidden bg-[var(--accent-soft)]">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -88,7 +91,8 @@ export function GallerySection({ photos, heading }: { photos?: StoreGalleryPhoto
           <button
             key={`${p.url}-${i}`}
             onClick={() => setOpen(i)}
-            className="group relative w-[72%] shrink-0 snap-center overflow-hidden rounded-3xl bg-[var(--accent-soft)] text-left shadow-sm transition hover:shadow-xl sm:mb-4 sm:block sm:w-full sm:break-inside-avoid"
+            style={{ "--fx-delay": `${(i * 1.7) % 7.5}s` } as React.CSSProperties}
+            className="fx-spotlight fx-card-gleam group relative w-[72%] shrink-0 snap-center overflow-hidden rounded-3xl bg-[var(--accent-soft)] text-left shadow-sm transition duration-500 hover:-translate-y-1 hover:shadow-xl sm:mb-4 sm:block sm:w-full sm:break-inside-avoid"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -153,11 +157,14 @@ export function CakeTablesSection({
       <div className="grid gap-5 lg:grid-cols-2">
         {list.map((t, i) => (
           <Reveal key={`${t.title}-${i}`} delay={i * 100}>
-            <div className="flex h-full flex-col overflow-hidden rounded-[32px] border border-[var(--line)] bg-[var(--surface)] shadow-sm">
+            <div
+              style={{ "--fx-delay": `${i * 2.4}s` } as React.CSSProperties}
+              className="fx-spotlight flex h-full flex-col overflow-hidden rounded-[32px] border border-[var(--line)] bg-[var(--surface)] shadow-sm transition duration-500 hover:-translate-y-1 hover:shadow-xl"
+            >
               {t.photo_url && (
-                <div className="relative aspect-[16/10] shrink-0 overflow-hidden bg-[var(--accent-soft)]">
+                <div className="fx-card-gleam group relative aspect-[16/10] shrink-0 overflow-hidden bg-[var(--accent-soft)]">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={imgSrc(t.photo_url, IMG_WIDTH.card)} alt={`Bolo ${t.title}`} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
+                  <img src={imgSrc(t.photo_url, IMG_WIDTH.card)} alt={`Bolo ${t.title}`} loading="lazy" className="absolute inset-0 h-full w-full object-cover transition duration-700 group-hover:scale-[1.05]" />
                   <span className="absolute left-4 top-4 rounded-full bg-[var(--accent)] px-4 py-1.5 font-[family-name:var(--font-display)] text-lg font-semibold italic text-[var(--accent-ink)] shadow-lg">
                     {t.title}
                   </span>
@@ -177,13 +184,16 @@ export function CakeTablesSection({
                       )}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="group flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 transition hover:border-[var(--accent)] hover:shadow-md"
+                      className="group flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 transition duration-300 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-md"
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-bold uppercase tracking-wide">{size.label}</span>
                         {size.detail && <span className="block text-xs uppercase tracking-wider text-[var(--muted)]">{size.detail}</span>}
                       </span>
-                      <span className="shrink-0 rounded-xl bg-[#ffc72c] px-3 py-1.5 font-[family-name:var(--font-display)] text-lg font-bold text-[#3b1a10]">
+                      <span
+                        style={{ "--fx-delay": `${(i * 3 + j) * 0.55}s` } as React.CSSProperties}
+                        className="fx-shine fx-price-glow shrink-0 rounded-xl bg-[#ffc72c] px-3 py-1.5 font-[family-name:var(--font-display)] text-lg font-bold text-[#3b1a10]"
+                      >
                         {formatBRL(size.price)}
                       </span>
                       <IconWhatsapp className="hidden h-5 w-5 shrink-0 text-[#25d366] opacity-60 transition group-hover:opacity-100 sm:block" />

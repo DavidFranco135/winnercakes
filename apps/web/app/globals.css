@@ -654,3 +654,39 @@ input[type="radio"],
 input[type="range"] {
   accent-color: #c8102e;
 }
+
+/* Cards da confeitaria (sabores, galeria, tabela de bolos, fatias ao vivo):
+   um reflexo de luz atravessa o card de tempos em tempos, cada um num momento
+   (--fx-delay), igual ao brilho dos cards da Moriá. */
+.store-fx .fx-card-gleam {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.store-fx .fx-card-gleam::before {
+  content: "";
+  position: absolute;
+  inset: -20% -60%;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 38%, rgba(255, 255, 255, 0.5) 50%, transparent 62%);
+  transform: translateX(-130%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .store-fx .fx-card-gleam::before {
+    animation: fx-gleam 7.5s ease-in-out infinite;
+    animation-delay: var(--fx-delay, 0s);
+  }
+  .store-fx .fx-card-gleam:hover::before {
+    animation: fx-sweep 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* Preço e selos: brilho dourado pulsando de leve */
+  .store-fx .fx-price-glow {
+    animation: fx-price-glow 3.2s ease-in-out infinite;
+    animation-delay: var(--fx-delay, 0s);
+  }
+}
+@keyframes fx-price-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 199, 44, 0); }
+  50% { box-shadow: 0 0 22px 2px rgba(255, 199, 44, 0.55); }
+}
