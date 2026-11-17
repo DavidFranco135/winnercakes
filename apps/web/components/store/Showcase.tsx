@@ -3,6 +3,7 @@
 // Quadro de sabores (fatias do festival) e galeria de fotos das encomendas.
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { StoreCakeTable, StoreFaq, StoreFlavor, StoreGalleryPhoto } from "@/lib/store";
 import { formatBRL } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
@@ -63,7 +64,12 @@ export function GallerySection({ photos, heading }: { photos?: StoreGalleryPhoto
       if (e.key === "ArrowLeft") setOpen((i) => (i === null ? i : (i - 1 + list.length) % list.length));
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
   }, [open, list.length]);
 
   if (list.length === 0) return null;
@@ -100,7 +106,9 @@ export function GallerySection({ photos, heading }: { photos?: StoreGalleryPhoto
         ))}
       </div>
 
-      {current && (
+      {/* Renderizado direto no <body>: dentro da página, efeitos com transform
+          faziam a janela abrir lá no topo, fora da tela. */}
+      {current && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm animate-fade-in"
           onClick={() => setOpen(null)}
@@ -114,10 +122,11 @@ export function GallerySection({ photos, heading }: { photos?: StoreGalleryPhoto
           </button>
           <figure className="max-h-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imgSrc(current.url, IMG_WIDTH.hero)} alt={current.caption || ""} className="max-h-[82vh] w-auto rounded-2xl object-contain" />
+            <img src={imgSrc(current.url, IMG_WIDTH.hero)} alt={current.caption || ""} className="max-h-[82vh] w-auto max-w-full rounded-2xl object-contain" />
             {current.caption && <figcaption className="pt-3 text-center text-sm text-white/85">{current.caption}</figcaption>}
           </figure>
-        </div>
+        </div>,
+        document.body
       )}
     </section>
   );
