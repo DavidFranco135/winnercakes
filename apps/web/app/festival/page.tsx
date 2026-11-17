@@ -12,10 +12,20 @@ import { AppShell } from "@/components/AppShell";
 import type { StoreAdminResponse, StoreFestival, StoreFlavor } from "@/lib/store";
 import { festivalDateParts, formatBRL, upcomingFestivals } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
-import type { FestivalItem, FestivalSale, FestivalState, FestivalStatus } from "@/lib/festival";
-import { PAYMENT_LABELS, newSaleId, remaining, todayBRT } from "@/lib/festival";
+import type { FestivalItem, FestivalOnlineOrder, FestivalSale, FestivalState, FestivalStatus, MercadoPagoSettings, RedeemResult } from "@/lib/festival";
+import { PAYMENT_LABELS, heldByItem, newSaleId, remaining, todayBRT } from "@/lib/festival";
+import { QrScanner } from "@/components/QrScanner";
 
-type Tab = "vender" | "cardapio" | "resumo";
+type Tab = "vender" | "retirada" | "cardapio" | "resumo";
+
+const ORDER_STATUS: Record<string, string> = {
+  aguardando: "Esperando Pix",
+  pago: "Pago · a retirar",
+  retirado: "Retirado",
+  expirado: "Expirou",
+  cancelado: "Cancelado",
+  pago_sem_estoque: "Pago sem fatia — devolver",
+};
 type Method = "dinheiro" | "cartao" | "pix";
 interface PendingSale {
   day: string;
@@ -86,6 +96,12 @@ export default function FestivalPage() {
   const [method, setMethod] = useState<Method>("dinheiro");
   const [received, setReceived] = useState("");
   const [selling, setSelling] = useState(false);
+  const [redeemResult, setRedeemResult] = useState<RedeemResult | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
+  const [manualCode, setManualCode] = useState("");
+  const [mp, setMp] = useState<MercadoPagoSettings | null>(null);
+  const [mpToken, setMpToken] = useState("");
+  const [mpTest, setMpTest] = useState(true);
   const [pending, setPending] = useState<PendingSale[]>(() => (typeof window === "undefined" ? [] : readPending()));
   const flushing = useRef(false);
 
@@ -106,6 +122,12 @@ export default function FestivalPage() {
         setDay((d) => d || (list.some((f) => f.date === today) ? today : next?.date ?? today));
       })
       .catch(() => setDay((d) => d || todayBRT()));
+    apiFetch<MercadoPagoSettings>(`${orgPath}/payments/mercadopago`, { accessToken })
+      .then((m) => {
+        setMp(m);
+        setMpTest(m.test_mode);
+      })
+      .catch(() => setMp(null));
   }, [status, accessToken, currentOrganizationId, orgPath]);
 
   const load = useCallback(async () => {
@@ -198,7 +220,8 @@ export default function FestivalPage() {
     for (const p of pending) if (p.day === day) for (const l of p.body.lines) m[l.item_id] = (m[l.item_id] ?? 0) + l.qty;
     return m;
   }, [pending, day]);
-  const left = (it: FestivalItem) => Math.max(0, remaining(it) - (pendingQty[it.id] ?? 0));
+  const held = useMemo(() => heldByItem(state?.orders), [state]);
+  const left = (it: FestivalItem) => Math.max(0, remaining(it) - (held[it.id] ?? 0) - (pendingQty[it.id] ?? 0));
 
   const cartLines = Object.entries(cart).filter(([, q]) => q > 0);
   const cartTotal = cartLines.reduce((s, [id, q]) => s + q * (itemById.get(id)?.price ?? 0), 0);
@@ -276,6 +299,51 @@ export default function FestivalPage() {
     }
   }
 
+  // ---- Retirada (ticket do celular) ----
+  const redeemCode = useCallback(
+    async (code: string) => {
+      if (!accessToken || !code.trim()) return;
+      setRedeeming(true);
+      try {
+        const r = await apiFetch<RedeemResult>(`${orgPath}/festival-live/${day}/redeem`, {
+          method: "POST",
+          accessToken,
+          body: JSON.stringify({ code: code.trim() }),
+        });
+        setRedeemResult(r);
+        if (r.state) setState(r.state);
+        if (navigator.vibrate) navigator.vibrate(r.result === "entregar" ? 120 : [80, 60, 80, 60, 200]);
+      } catch (err) {
+        setRedeemResult({
+          result: "nao_encontrado",
+          message: err instanceof ApiError ? err.message : "Sem internet: não dá para conferir o ticket agora.",
+          order: null,
+          state: null,
+        });
+      } finally {
+        setRedeeming(false);
+        setManualCode("");
+      }
+    },
+    [accessToken, orgPath, day]
+  );
+
+  async function saveMp() {
+    if (!accessToken) return;
+    try {
+      const m = await apiFetch<MercadoPagoSettings>(`${orgPath}/payments/mercadopago`, {
+        method: "PUT",
+        accessToken,
+        body: JSON.stringify({ access_token: mpToken.trim() || null, test_mode: mpTest }),
+      });
+      setMp(m);
+      setMpToken("");
+      setNotice("Mercado Pago salvo");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Sem conexão. Não foi salvo.");
+    }
+  }
+
   // ---- Cardápio ----
   function editDraft(fn: (d: FestivalState) => FestivalState) {
     const base = dirty ? draftEdit : state;
@@ -313,6 +381,7 @@ export default function FestivalPage() {
         accessToken,
         body: JSON.stringify({
           public_enabled: d.public_enabled,
+          online_enabled: d.online_enabled,
           status: d.status,
           counter_reserve_pct: d.counter_reserve_pct,
           max_per_order: d.max_per_order,
@@ -350,7 +419,14 @@ export default function FestivalPage() {
       byMethod[s.method] = (byMethod[s.method] ?? 0) + s.total;
       for (const l of s.lines) slices += l.qty;
     }
-    return { count: valid.length, revenue, slices, byMethod, canceled: (state?.sales ?? []).length - valid.length };
+    for (const o of state?.orders ?? []) {
+      if (o.status !== "pago" && o.status !== "retirado") continue;
+      revenue += o.total;
+      byMethod.online = (byMethod.online ?? 0) + o.total;
+      for (const l of o.lines) slices += l.qty;
+    }
+    const onlineCount = (state?.orders ?? []).filter((o) => o.status === "pago" || o.status === "retirado").length;
+    return { count: valid.length + onlineCount, revenue, slices, byMethod, canceled: (state?.sales ?? []).length - valid.length };
   }, [state]);
 
   const dateOptions = useMemo(() => {
@@ -398,13 +474,13 @@ export default function FestivalPage() {
             />
           </div>
           <div className="flex rounded-xl border border-neutral-800 bg-neutral-950 p-1 text-sm">
-            {(["vender", "cardapio", "resumo"] as Tab[]).map((t) => (
+            {(["vender", "retirada", "cardapio", "resumo"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={`rounded-lg px-4 py-2 font-medium ${tab === t ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}
               >
-                {t === "vender" ? "Vender" : t === "cardapio" ? "Cardápio do dia" : "Resumo"}
+                {t === "vender" ? "Vender" : t === "retirada" ? "Retirada" : t === "cardapio" ? "Cardápio do dia" : "Resumo"}
               </button>
             ))}
           </div>
@@ -447,7 +523,23 @@ export default function FestivalPage() {
               />
               Mostrar fatias ao vivo no site
             </label>
+            <label className={`flex items-center gap-2 ${mp?.configured ? "cursor-pointer" : "opacity-40"}`} title={mp?.configured ? "" : "Configure o Mercado Pago em Cardápio do dia"}>
+              <input
+                type="checkbox"
+                checked={draft.online_enabled}
+                disabled={!mp?.configured}
+                onChange={(e) => quickToggle({ online_enabled: e.target.checked, public_enabled: e.target.checked ? true : draft.public_enabled })}
+                className="h-4 w-4"
+              />
+              Venda pelo celular (Pix)
+              {mp?.configured && mp.test_mode && <span className="rounded bg-amber-600 px-1.5 text-[10px] font-bold text-white">TESTE</span>}
+            </label>
           </div>
+        )}
+        {(state?.orders ?? []).some((o) => o.status === "pago_sem_estoque") && (
+          <p className="rounded-lg bg-amber-950 p-2 text-sm text-amber-300">
+            Há pedido pago pelo celular sem fatia disponível (o Pix caiu depois do prazo e o sabor esgotou). Devolva o Pix pelo app do Mercado Pago — veja em Resumo.
+          </p>
         )}
 
         {pending.length > 0 && (
@@ -625,6 +717,68 @@ export default function FestivalPage() {
           )
         )}
 
+        {/* ---------------- RETIRADA ---------------- */}
+        {state && tab === "retirada" && (
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div className="space-y-3">
+              <QrScanner onCode={redeemCode} paused={redeeming || redeemResult !== null} />
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  redeemCode(manualCode);
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                  placeholder="Ou digite o número do pedido (ex.: 27)"
+                  inputMode="numeric"
+                  className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm"
+                />
+                <button className="rounded-lg bg-blue-600 px-4 text-sm font-medium">Conferir</button>
+              </form>
+              <p className="text-xs text-neutral-500">Pelo número, confira também o nome do cliente.</p>
+            </div>
+            <div>
+              {redeemResult ? (
+                <div
+                  className={`space-y-3 rounded-2xl p-6 text-white ${
+                    redeemResult.result === "entregar"
+                      ? "bg-emerald-600"
+                      : redeemResult.result === "nao_pago"
+                        ? "bg-amber-600"
+                        : "bg-red-700"
+                  }`}
+                >
+                  <p className="text-3xl font-black leading-tight">
+                    {redeemResult.result === "entregar" ? "✓ ENTREGAR" : redeemResult.result === "ja_retirado" ? "✕ JÁ RETIRADO" : redeemResult.result === "nao_pago" ? "! NÃO PAGO" : "✕ ATENÇÃO"}
+                  </p>
+                  <p className="text-lg font-semibold">{redeemResult.message}</p>
+                  {redeemResult.order && (
+                    <div className="rounded-xl bg-black/20 p-4">
+                      <p className="text-2xl font-bold">{redeemResult.order.code} · {redeemResult.order.name}</p>
+                      <ul className="mt-2 space-y-1 text-lg">
+                        {redeemResult.order.lines.map((l) => (
+                          <li key={l.item_id}><strong>{l.qty}×</strong> {l.flavor}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <button onClick={() => setRedeemResult(null)} className="w-full rounded-xl bg-white py-3 text-base font-bold text-neutral-900">
+                    Próximo cliente
+                  </button>
+                </div>
+              ) : (
+                <div className="flex h-full min-h-[200px] items-center justify-center rounded-2xl border border-dashed border-neutral-700 p-6 text-center text-neutral-400">
+                  {redeeming ? "Conferindo…" : "Aponte a câmera para o QR do ticket no celular do cliente."}
+                </div>
+              )}
+              <OrdersList orders={(state.orders ?? []).filter((o) => o.status === "pago")} title="Pagos esperando retirada" />
+            </div>
+          </div>
+        )}
+
         {/* ---------------- CARDÁPIO ---------------- */}
         {draft && tab === "cardapio" && (
           <div className="space-y-4">
@@ -724,10 +878,9 @@ export default function FestivalPage() {
               </button>
             </div>
 
-            <details className="rounded-xl border border-neutral-800 p-3 text-sm text-neutral-300">
-              <summary className="cursor-pointer font-medium">Venda pelo celular (próxima etapa)</summary>
-              <p className="mt-2 text-xs text-neutral-500">Só vale quando a venda com Pix pelo QR code for ligada.</p>
-              <div className="mt-3 flex flex-wrap gap-4">
+            <div className="space-y-4 rounded-xl border border-neutral-800 p-4 text-sm text-neutral-300">
+              <p className="font-semibold text-white">Venda pelo celular (Pix na fila)</p>
+              <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2">
                   Guardar para o balcão
                   <input
@@ -753,7 +906,37 @@ export default function FestivalPage() {
                   fatias
                 </label>
               </div>
-            </details>
+              <div className="space-y-2 border-t border-neutral-800 pt-4">
+                <p className="font-medium text-white">
+                  Mercado Pago{" "}
+                  {mp?.configured ? (
+                    <span className="text-xs font-normal text-emerald-400">conectado ({mp.token_hint}{mp.test_mode ? " · teste" : " · produção"})</span>
+                  ) : (
+                    <span className="text-xs font-normal text-neutral-500">não configurado</span>
+                  )}
+                </p>
+                <p className="text-xs text-neutral-500">
+                  Cole o Access Token (Mercado Pago Developers → Suas integrações → Credenciais). Ele fica guardado só no servidor e nunca aparece de novo aqui.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={mpToken}
+                    onChange={(e) => setMpToken(e.target.value)}
+                    placeholder={mp?.configured ? "Novo token (deixe vazio para manter)" : "APP_USR-…"}
+                    className="min-w-[260px] flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2"
+                  />
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={mpTest} onChange={(e) => setMpTest(e.target.checked)} />
+                    Modo teste (Pix aprovado sozinho)
+                  </label>
+                  <button onClick={saveMp} disabled={!mpToken.trim() && !mp?.configured} className="rounded-lg bg-blue-600 px-4 py-2 font-medium disabled:opacity-40">
+                    Salvar
+                  </button>
+                </div>
+              </div>
+            </div>
 
             <div className="sticky bottom-3 flex justify-end gap-2">
               {dirty && (
@@ -823,9 +1006,9 @@ export default function FestivalPage() {
               <div className="space-y-4">
                 <div className="rounded-xl border border-neutral-800 p-4">
                   <p className="mb-3 text-sm font-semibold">Por forma de pagamento</p>
-                  {Object.keys(PAYMENT_LABELS).map((m) => (
+                  {[...Object.keys(PAYMENT_LABELS), "online"].map((m) => (
                     <div key={m} className="flex justify-between border-t border-neutral-900 py-1.5 text-sm">
-                      <span>{PAYMENT_LABELS[m]}</span>
+                      <span>{m === "online" ? "Pix pelo celular" : PAYMENT_LABELS[m]}</span>
                       <span>{formatBRL(summary.byMethod[m] ?? 0)}</span>
                     </div>
                   ))}
@@ -833,8 +1016,9 @@ export default function FestivalPage() {
                     <p className="pt-2 text-xs text-neutral-500">{summary.canceled} {summary.canceled === 1 ? "venda cancelada" : "vendas canceladas"} (fora da conta).</p>
                   )}
                 </div>
+                <OrdersList orders={state.orders ?? []} title="Pedidos pelo celular" />
                 <div className="rounded-xl border border-neutral-800 p-4">
-                  <p className="mb-2 text-sm font-semibold">Todas as vendas</p>
+                  <p className="mb-2 text-sm font-semibold">Todas as vendas do balcão</p>
                   <div className="max-h-72 space-y-1 overflow-y-auto">
                     {[...state.sales].reverse().map((s) => (
                       <div key={s.id} className={`flex gap-2 text-xs ${s.canceled ? "text-neutral-600 line-through" : "text-neutral-300"}`}>
@@ -853,5 +1037,27 @@ export default function FestivalPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+function OrdersList({ orders, title }: { orders: FestivalOnlineOrder[]; title: string }) {
+  if (orders.length === 0) return null;
+  return (
+    <div className="mt-4 rounded-xl border border-neutral-800 p-4">
+      <p className="mb-2 text-sm font-semibold">{title}</p>
+      <div className="max-h-72 space-y-1 overflow-y-auto">
+        {[...orders].reverse().map((o) => (
+          <div key={o.id} className="flex items-center gap-2 text-xs text-neutral-300">
+            <span className="w-12 shrink-0 font-semibold">{o.code}</span>
+            <span className="w-24 shrink-0 truncate">{o.name}</span>
+            <span className="min-w-0 flex-1 truncate">{o.lines.map((l) => `${l.qty}× ${l.flavor}`).join(", ")}</span>
+            <span className={`shrink-0 ${o.status === "pago_sem_estoque" ? "text-amber-400" : o.status === "pago" ? "text-emerald-400" : "text-neutral-500"}`}>
+              {ORDER_STATUS[o.status] ?? o.status}
+            </span>
+            <span className="w-16 shrink-0 text-right">{formatBRL(o.total)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

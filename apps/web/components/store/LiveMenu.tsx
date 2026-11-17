@@ -4,8 +4,18 @@
 // dona liga "Mostrar no site". Mostra quantas fatias restam de cada sabor e
 // atualiza sozinho a cada poucos segundos.
 
-import { useEffect, useState } from "react";
-import { loadPublicFestival, type PublicFestivalLive } from "@/lib/festival";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { ApiError } from "@/lib/api-client";
+import {
+  createFestivalOrder,
+  loadPublicFestival,
+  saveTicket,
+  savedTickets,
+  ticketHref,
+  type PublicFestivalLive,
+  type SavedTicket,
+} from "@/lib/festival";
 import { formatBRL } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import { Reveal } from "./ui";
@@ -41,7 +51,33 @@ function countLabel(n: number): string {
   return `${n} fatias`;
 }
 
-export function LiveMenu({ live }: { live: PublicFestivalLive | null }) {
+export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug: string }) {
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [checkout, setCheckout] = useState(false);
+  const [tickets, setTickets] = useState<SavedTicket[]>([]);
+  useEffect(() => {
+    const t = setTimeout(() => setTickets(savedTickets(slug)), 0);
+    return () => clearTimeout(t);
+  }, [slug]);
+
+  const online = Boolean(live?.online_enabled);
+  const byId = useMemo(() => new Map((live?.items ?? []).map((i) => [i.id, i])), [live]);
+  const lines = Object.entries(cart).filter(([id, q]) => q > 0 && byId.has(id));
+  const count = lines.reduce((s, [, q]) => s + q, 0);
+  const total = lines.reduce((s, [id, q]) => s + q * (byId.get(id)?.price ?? 0), 0);
+  const maxTotal = live?.max_per_order ?? 6;
+
+  function bump(id: string, delta: number) {
+    const it = byId.get(id);
+    if (!it) return;
+    setCart((c) => {
+      const current = c[id] ?? 0;
+      const others = Object.entries(c).reduce((s, [k, q]) => (k === id ? s : s + q), 0);
+      const next = Math.max(0, Math.min(current + delta, it.online_available, maxTotal - others));
+      return { ...c, [id]: next };
+    });
+  }
+
   if (!live || live.items.length === 0) return null;
   const closed = live.status === "encerrado";
   const preparing = live.status === "preparando";
@@ -65,6 +101,25 @@ export function LiveMenu({ live }: { live: PublicFestivalLive | null }) {
           </p>
         </div>
       </Reveal>
+      {tickets.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-[var(--muted)]">Seus pedidos de hoje:</span>
+          {tickets.map((t) => (
+            <a
+              key={t.token}
+              href={ticketHref(slug, t.token)}
+              className="rounded-full bg-[var(--accent)] px-4 py-1.5 text-sm font-semibold text-[var(--accent-ink)]"
+            >
+              Ticket {t.code}
+            </a>
+          ))}
+        </div>
+      )}
+      {online && !closed && (
+        <p className="rounded-2xl bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-text)]">
+          <strong>Na fila?</strong> Escolha aqui, pague com Pix e retire na banca só mostrando o QR — sem esperar para pagar.
+        </p>
+      )}
       {closed ? (
         <p className="rounded-3xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--muted)]">
           Obrigada por virem! Veja abaixo o próximo festival.
@@ -101,11 +156,166 @@ export function LiveMenu({ live }: { live: PublicFestivalLive | null }) {
               <div className="space-y-0.5 p-3">
                 <p className="text-sm font-semibold leading-snug">{it.flavor}</p>
                 {it.price > 0 && <p className="text-sm text-[var(--accent-text)]">{formatBRL(it.price)}</p>}
+                {online && !it.sold_out && it.price > 0 && (
+                  it.online_available > 0 ? (
+                    <div className="flex items-center justify-between pt-2">
+                      <button
+                        onClick={() => bump(it.id, -1)}
+                        disabled={!cart[it.id]}
+                        aria-label={`Tirar ${it.flavor}`}
+                        className="h-9 w-9 rounded-full border border-[var(--line)] text-lg font-semibold disabled:opacity-30"
+                      >
+                        −
+                      </button>
+                      <span className="text-base font-bold">{cart[it.id] ?? 0}</span>
+                      <button
+                        onClick={() => bump(it.id, 1)}
+                        disabled={(cart[it.id] ?? 0) >= it.online_available || count >= maxTotal}
+                        aria-label={`Adicionar ${it.flavor}`}
+                        className="h-9 w-9 rounded-full bg-[var(--accent)] text-lg font-semibold text-[var(--accent-ink)] disabled:opacity-30"
+                      >
+                        +
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="pt-2 text-xs text-[var(--muted)]">Só no balcão</p>
+                  )
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
+      {online && count > 0 && !closed && typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-x-3 bottom-3 z-[60] mx-auto flex max-w-xl items-center gap-3 rounded-full bg-[var(--ink)] p-2 pl-5 text-[var(--bg)] shadow-2xl">
+            <span className="flex-1 text-sm">
+              <strong>{count}</strong> {count === 1 ? "fatia" : "fatias"} · <strong>{formatBRL(total)}</strong>
+            </span>
+            <button
+              onClick={() => setCheckout(true)}
+              className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--accent-ink)]"
+            >
+              Pagar com Pix
+            </button>
+          </div>,
+          portalTarget()
+        )}
+      {checkout && (
+        <CheckoutSheet
+          slug={slug}
+          lines={lines.map(([id, q]) => ({ item_id: id, qty: q, flavor: byId.get(id)?.flavor ?? "", price: byId.get(id)?.price ?? 0 }))}
+          total={total}
+          onClose={() => setCheckout(false)}
+        />
+      )}
     </section>
   );
+}
+
+function CheckoutSheet({
+  slug,
+  lines,
+  total,
+  onClose,
+}: {
+  slug: string;
+  lines: { item_id: string; qty: number; flavor: string; price: number }[];
+  total: number;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [agree, setAgree] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const order = await createFestivalOrder(slug, {
+        name: name.trim(),
+        phone: phone.replace(/\D/g, ""),
+        lines: lines.map(({ item_id, qty }) => ({ item_id, qty })),
+      });
+      saveTicket({ slug, token: order.token, code: order.code, date: order.date });
+      window.location.href = ticketHref(slug, order.token);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Sem conexão. Tente de novo.");
+      setBusy(false);
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/55 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+      <form
+        onSubmit={submit}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md space-y-4 rounded-t-[28px] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl sm:rounded-[28px]"
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="font-[family-name:var(--font-display)] text-2xl font-semibold">Seu pedido</h3>
+          <button type="button" onClick={onClose} className="text-sm text-[var(--muted)]">Fechar</button>
+        </div>
+        <ul className="space-y-1 text-sm">
+          {lines.map((l) => (
+            <li key={l.item_id} className="flex justify-between">
+              <span>{l.qty}× {l.flavor}</span>
+              <span>{formatBRL(l.qty * l.price)}</span>
+            </li>
+          ))}
+          <li className="flex justify-between border-t border-[var(--line)] pt-2 font-semibold">
+            <span>Total</span>
+            <span>{formatBRL(total)}</span>
+          </li>
+        </ul>
+        <input
+          required
+          minLength={2}
+          maxLength={60}
+          placeholder="Seu nome (para conferir na retirada)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm"
+        />
+        <input
+          required
+          inputMode="tel"
+          placeholder="WhatsApp com DDD"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          className="w-full rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm"
+        />
+        <label className="flex items-start gap-2 text-xs leading-relaxed text-[var(--muted)]">
+          <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-0.5" required />
+          As fatias ficam guardadas por 15 minutos para o Pix. Depois de pago, retire na banca mostrando o QR do ticket. Pedido pago e não retirado até o fim do festival não tem reembolso.
+        </label>
+        {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        <button
+          disabled={busy || !agree}
+          className="w-full rounded-full bg-[var(--accent)] py-3.5 text-base font-semibold text-[var(--accent-ink)] disabled:opacity-50"
+        >
+          {busy ? "Gerando Pix…" : `Gerar Pix de ${formatBRL(total)}`}
+        </button>
+      </form>
+    </div>,
+    portalTarget()
+  );
+}
+
+// Dentro da raiz da loja (onde ficam as cores do tema), fora de qualquer
+// elemento com animação — assim "fixed" vale para a tela inteira.
+function portalTarget(): Element {
+  return document.querySelector(".store-fx") ?? document.body;
 }

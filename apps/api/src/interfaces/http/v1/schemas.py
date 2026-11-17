@@ -1270,15 +1270,17 @@ class FestivalLiveItem(BaseModel):
 
 
 class FestivalLiveItemState(FestivalLiveItem):
-    sold: int = 0
+    sold: int = 0  # total vendido (balcão + celular pago)
+    sold_online: int = 0  # parte do total que foi paga pelo celular
 
 
 class FestivalLiveConfig(BaseModel):
     """O que a dona configura antes/durante o festival (sem as vendas)."""
 
     public_enabled: bool = False
+    online_enabled: bool = False
     status: Literal["preparando", "aberto", "encerrado"] = "preparando"
-    # Para a venda pelo celular (etapa 2): parte das fatias fica só para o balcão.
+    # Venda pelo celular: parte das fatias fica só para o balcão.
     counter_reserve_pct: int = Field(default=30, ge=0, le=100)
     max_per_order: int = Field(default=6, ge=1, le=100)
     items: list[FestivalLiveItem] = Field(default_factory=list, max_length=60)
@@ -1316,30 +1318,110 @@ class FestivalSale(BaseModel):
     canceled_at: str | None = None
 
 
+OnlineOrderStatus = Literal[
+    "aguardando", "pago", "retirado", "expirado", "cancelado", "pago_sem_estoque"
+]
+
+
+class FestivalOnlineOrder(BaseModel):
+    """Pedido feito pelo celular na fila: segura as fatias até o Pix cair."""
+
+    id: str
+    token: str  # segredo do ticket (vai no QR); nunca aparece em listas públicas
+    code: str  # código curto para conferência ("W-27")
+    name: str
+    phone: str = ""
+    lines: list[FestivalSaleLine]
+    total: float
+    status: OnlineOrderStatus = "aguardando"
+    created_at: str
+    hold_until: str
+    paid_at: str | None = None
+    redeemed_at: str | None = None
+    mp_order_id: str | None = None
+    pix_code: str = ""
+    pix_url: str = ""
+    test_mode: bool = False
+
+
 class FestivalLiveState(BaseModel):
     date: str
     public_enabled: bool = False
+    online_enabled: bool = False
     status: Literal["preparando", "aberto", "encerrado"] = "preparando"
     counter_reserve_pct: int = 30
     max_per_order: int = 6
     items: list[FestivalLiveItemState] = Field(default_factory=list)
     sales: list[FestivalSale] = Field(default_factory=list)
+    orders: list[FestivalOnlineOrder] = Field(default_factory=list)
+    order_seq: int = 0
     updated_at: str | None = None
 
 
 class PublicFestivalLiveItem(BaseModel):
+    id: str = ""
     flavor: str
     photo_url: str = ""
     price: float = 0
     remaining: int = 0
     sold_out: bool = False
+    online_available: int = 0
 
 
 class PublicFestivalLive(BaseModel):
     date: str
     status: str
     items: list[PublicFestivalLiveItem]
+    online_enabled: bool = False
+    max_per_order: int = 6
     updated_at: str | None = None
+
+
+class FestivalOrderCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=60)
+    phone: str = Field(min_length=10, max_length=20)
+    lines: list[FestivalSaleLineIn] = Field(min_length=1, max_length=30)
+
+
+class PublicFestivalOrder(BaseModel):
+    """O que o cliente vê do próprio pedido (pela página do ticket)."""
+
+    token: str
+    code: str
+    name: str
+    lines: list[FestivalSaleLine]
+    total: float
+    status: OnlineOrderStatus
+    created_at: str
+    hold_until: str
+    paid_at: str | None = None
+    redeemed_at: str | None = None
+    pix_code: str = ""
+    pix_url: str = ""
+    test_mode: bool = False
+    date: str = ""
+
+
+class FestivalRedeemRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=120)
+
+
+class FestivalRedeemResult(BaseModel):
+    result: Literal["entregar", "ja_retirado", "nao_pago", "nao_encontrado", "sem_estoque"]
+    message: str
+    order: FestivalOnlineOrder | None = None
+    state: FestivalLiveState | None = None
+
+
+class MercadoPagoSettingsIn(BaseModel):
+    access_token: str | None = Field(default=None, max_length=300)
+    test_mode: bool = True
+
+
+class MercadoPagoSettingsOut(BaseModel):
+    configured: bool = False
+    test_mode: bool = True
+    token_hint: str = ""
 
 
 class PublicFestivalLiveResponse(BaseModel):

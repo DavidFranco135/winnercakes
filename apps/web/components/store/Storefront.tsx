@@ -785,7 +785,7 @@ export function Storefront({ slug }: { slug: string }) {
 
                 <PromoStrip notices={promoList} onClick={openPromo} />
 
-                <LiveMenu live={liveFestival} />
+                <LiveMenu live={liveFestival} slug={slug} />
 
                 <FestivalsSection
                   festivals={settings.festivals}

@@ -194,3 +194,15 @@ class ImageTooLargeError(DomainError):
 
 class FestivalSaleNotFoundError(DomainError):
     pass
+
+
+class FestivalOrderError(DomainError):
+    """Pedido pelo celular recusado (festival fechado, pedido duplicado...)."""
+
+
+class PaymentProviderError(DomainError):
+    pass
+
+
+class TooManyRequestsError(DomainError):
+    pass

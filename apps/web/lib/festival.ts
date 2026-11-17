@@ -11,6 +11,25 @@ export interface FestivalItem {
   price: number;
   slices_total: number;
   sold: number;
+  sold_online?: number;
+}
+
+export type OnlineOrderStatus = "aguardando" | "pago" | "retirado" | "expirado" | "cancelado" | "pago_sem_estoque";
+
+export interface FestivalOnlineOrder {
+  id: string;
+  token: string;
+  code: string;
+  name: string;
+  phone: string;
+  lines: FestivalSaleLine[];
+  total: number;
+  status: OnlineOrderStatus;
+  created_at: string;
+  hold_until: string;
+  paid_at: string | null;
+  redeemed_at: string | null;
+  test_mode: boolean;
 }
 
 export interface FestivalSaleLine {
@@ -35,6 +54,8 @@ export interface FestivalSale {
 export interface FestivalState {
   date: string;
   public_enabled: boolean;
+  online_enabled: boolean;
+  orders: FestivalOnlineOrder[];
   status: FestivalStatus;
   counter_reserve_pct: number;
   max_per_order: number;
@@ -46,8 +67,106 @@ export interface FestivalState {
 export interface PublicFestivalLive {
   date: string;
   status: FestivalStatus;
-  items: { flavor: string; photo_url: string; price: number; remaining: number; sold_out: boolean }[];
+  items: {
+    id: string;
+    flavor: string;
+    photo_url: string;
+    price: number;
+    remaining: number;
+    sold_out: boolean;
+    online_available: number;
+  }[];
+  online_enabled: boolean;
+  max_per_order: number;
   updated_at: string | null;
+}
+
+export interface PublicFestivalOrder {
+  token: string;
+  code: string;
+  name: string;
+  lines: FestivalSaleLine[];
+  total: number;
+  status: OnlineOrderStatus;
+  created_at: string;
+  hold_until: string;
+  paid_at: string | null;
+  redeemed_at: string | null;
+  pix_code: string;
+  pix_url: string;
+  test_mode: boolean;
+  date: string;
+}
+
+export interface RedeemResult {
+  result: "entregar" | "ja_retirado" | "nao_pago" | "nao_encontrado" | "sem_estoque";
+  message: string;
+  order: FestivalOnlineOrder | null;
+  state: FestivalState | null;
+}
+
+export interface MercadoPagoSettings {
+  configured: boolean;
+  test_mode: boolean;
+  token_hint: string;
+}
+
+/** Fatias seguradas por pedidos do celular esperando o Pix. */
+export function heldByItem(orders: FestivalOnlineOrder[] | undefined, now = Date.now()): Record<string, number> {
+  const held: Record<string, number> = {};
+  for (const o of orders ?? []) {
+    if (o.status !== "aguardando" || new Date(o.hold_until).getTime() <= now) continue;
+    for (const l of o.lines) held[l.item_id] = (held[l.item_id] ?? 0) + l.qty;
+  }
+  return held;
+}
+
+const publicOrderPath = (slug: string) => `/api/v1/public/stores/${encodeURIComponent(slug)}/festival-orders`;
+
+export function createFestivalOrder(
+  slug: string,
+  body: { name: string; phone: string; lines: { item_id: string; qty: number }[] }
+): Promise<PublicFestivalOrder> {
+  return apiFetch<PublicFestivalOrder>(publicOrderPath(slug), { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getFestivalOrder(slug: string, token: string): Promise<PublicFestivalOrder> {
+  return apiFetch<PublicFestivalOrder>(`${publicOrderPath(slug)}/${encodeURIComponent(token)}`);
+}
+
+export function cancelFestivalOrder(slug: string, token: string): Promise<PublicFestivalOrder> {
+  return apiFetch<PublicFestivalOrder>(`${publicOrderPath(slug)}/${encodeURIComponent(token)}/cancel`, { method: "POST" });
+}
+
+// Tickets ficam guardados no celular do cliente: reabrir o site mostra "Meus pedidos".
+const TICKETS_KEY = "festival_tickets";
+export interface SavedTicket {
+  slug: string;
+  token: string;
+  code: string;
+  date: string;
+}
+export function savedTickets(slug: string): SavedTicket[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(TICKETS_KEY) || "[]") as SavedTicket[];
+    return all.filter((t) => t.slug === slug && t.date === todayBRT());
+  } catch {
+    return [];
+  }
+}
+export function saveTicket(t: SavedTicket) {
+  try {
+    const all = (JSON.parse(localStorage.getItem(TICKETS_KEY) || "[]") as SavedTicket[]).filter(
+      (x) => x.token !== t.token && x.date >= todayBRT()
+    );
+    localStorage.setItem(TICKETS_KEY, JSON.stringify([...all, t].slice(-20)));
+  } catch {
+    /* navegador sem armazenamento: o link do ticket continua valendo */
+  }
+}
+
+export function ticketHref(slug: string, token: string): string {
+  return `/pedido?s=${encodeURIComponent(slug)}&t=${encodeURIComponent(token)}`;
 }
 
 export const PAYMENT_LABELS: Record<string, string> = {
