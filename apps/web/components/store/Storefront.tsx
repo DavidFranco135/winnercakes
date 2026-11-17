@@ -15,6 +15,7 @@ import { SearchOverlay } from "./SearchOverlay";
 import { useStoreFx } from "./fx";
 import { HeroSlider } from "./HeroSlider";
 import { FestivalsSection, nextFestivalNotice } from "./Festivals";
+import { LiveMenu, useLiveFestival } from "./LiveMenu";
 import { CakeTablesSection, FaqSection, FlavorsSection, GallerySection } from "./Showcase";
 import { SplashIntro } from "./SplashIntro";
 import { DesktopNav, MenuButton, MobileMenu, type NavCategory } from "./StoreNav";
@@ -198,6 +199,7 @@ async function loadPublicStore(slug: string): Promise<PublicStore> {
 export function Storefront({ slug }: { slug: string }) {
   // Conta a visita e o "online agora" (anônimo, sem IP) — aparece em Minha Loja.
   useVisitTracker(slug);
+  const liveFestival = useLiveFestival(slug);
   const [store, setStore] = useState<PublicStore | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
@@ -782,6 +784,8 @@ export function Storefront({ slug }: { slug: string }) {
                 </div>
 
                 <PromoStrip notices={promoList} onClick={openPromo} />
+
+                <LiveMenu live={liveFestival} />
 
                 <FestivalsSection
                   festivals={settings.festivals}

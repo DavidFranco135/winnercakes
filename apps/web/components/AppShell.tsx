@@ -117,11 +117,21 @@ function IconStore({ className }: { className?: string }) {
   );
 }
 
+function IconCake({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M4 20h16M5 20v-6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6" />
+      <path d="M5 16c1.2 1 2.3 1 3.5 0s2.3-1 3.5 0 2.3 1 3.5 0 2.3-1 3.5 0M12 12V8M12 5.5v.01" />
+    </svg>
+  );
+}
+
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Painel", icon: IconHome },
   { href: "/produtos", label: "Produtos", icon: IconTag },
   { href: "/catalogo", label: "Cardápio", icon: IconGrid },
   { href: "/loja-admin", label: "Minha Loja", icon: IconStore },
+  { href: "/festival", label: "Festival ao vivo", icon: IconCake },
   { href: "/pedidos", label: "Pedidos", icon: IconClipboard },
   { href: "/clientes", label: "Clientes", icon: IconUsers },
   { href: "/estoque", label: "Estoque", icon: IconArchive },

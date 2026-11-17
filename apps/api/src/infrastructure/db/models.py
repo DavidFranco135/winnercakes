@@ -668,3 +668,19 @@ class StoreVisitor(Base):
     visitor_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     last_day: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+
+class FestivalLive(Base):
+    """Cardápio ao vivo de um dia de festival (estoque de fatias + vendas do
+    balcão), guardado como um documento JSON por data."""
+
+    __tablename__ = "festival_live"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id"), primary_key=True
+    )
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )

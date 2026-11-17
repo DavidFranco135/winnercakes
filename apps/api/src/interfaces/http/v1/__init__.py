@@ -7,6 +7,8 @@ from src.interfaces.http.v1.billing import router as billing_router
 from src.interfaces.http.v1.calculator import router as calculator_router
 from src.interfaces.http.v1.customers import router as customers_router
 from src.interfaces.http.v1.dashboard import router as dashboard_router
+from src.interfaces.http.v1.festival import public_router as festival_public_router
+from src.interfaces.http.v1.festival import router as festival_router
 from src.interfaces.http.v1.finance import router as finance_router
 from src.interfaces.http.v1.health import router as health_router
 from src.interfaces.http.v1.inventory import router as inventory_router
@@ -42,3 +44,5 @@ router.include_router(billing_global_router)
 router.include_router(admin_migrate_router)
 router.include_router(store_router)
 router.include_router(store_public_router)
+router.include_router(festival_router)
+router.include_router(festival_public_router)

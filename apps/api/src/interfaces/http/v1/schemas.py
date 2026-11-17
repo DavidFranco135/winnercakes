@@ -1249,3 +1249,98 @@ class PublicStoreResponse(BaseModel):
     name: str
     settings: PublicStoreSettings
     products: list[PublicProduct]
+
+
+# ---------------------------------------------------------------------------
+# Festival ao vivo: cardápio do dia com estoque de fatias e PDV no tablet.
+# Um registro por data (AAAA-MM-DD) do festival.
+# ---------------------------------------------------------------------------
+
+_FESTIVAL_ID = r"^[A-Za-z0-9_-]+$"
+
+
+class FestivalLiveItem(BaseModel):
+    """Um sabor do cardápio do festival, com quantas fatias foram preparadas."""
+
+    id: str = Field(min_length=1, max_length=40, pattern=_FESTIVAL_ID)
+    flavor: str = Field(min_length=1, max_length=80)
+    photo_url: str = Field(default="", max_length=2000)
+    price: float = Field(default=0, ge=0, le=10000)
+    slices_total: int = Field(default=0, ge=0, le=100000)
+
+
+class FestivalLiveItemState(FestivalLiveItem):
+    sold: int = 0
+
+
+class FestivalLiveConfig(BaseModel):
+    """O que a dona configura antes/durante o festival (sem as vendas)."""
+
+    public_enabled: bool = False
+    status: Literal["preparando", "aberto", "encerrado"] = "preparando"
+    # Para a venda pelo celular (etapa 2): parte das fatias fica só para o balcão.
+    counter_reserve_pct: int = Field(default=30, ge=0, le=100)
+    max_per_order: int = Field(default=6, ge=1, le=100)
+    items: list[FestivalLiveItem] = Field(default_factory=list, max_length=60)
+
+
+class FestivalSaleLineIn(BaseModel):
+    item_id: str = Field(min_length=1, max_length=40)
+    qty: int = Field(ge=1, le=500)
+
+
+class FestivalSaleCreate(BaseModel):
+    # Gerado no tablet: reenviar a mesma venda (internet instável) não duplica.
+    id: str = Field(min_length=8, max_length=64, pattern=_FESTIVAL_ID)
+    lines: list[FestivalSaleLineIn] = Field(min_length=1, max_length=60)
+    method: Literal["dinheiro", "cartao", "pix"]
+    received: float | None = Field(default=None, ge=0, le=100000)
+
+
+class FestivalSaleLine(BaseModel):
+    item_id: str
+    flavor: str
+    qty: int
+    price: float
+
+
+class FestivalSale(BaseModel):
+    id: str
+    at: str
+    channel: Literal["balcao", "online"] = "balcao"
+    lines: list[FestivalSaleLine]
+    total: float
+    method: str
+    received: float | None = None
+    canceled: bool = False
+    canceled_at: str | None = None
+
+
+class FestivalLiveState(BaseModel):
+    date: str
+    public_enabled: bool = False
+    status: Literal["preparando", "aberto", "encerrado"] = "preparando"
+    counter_reserve_pct: int = 30
+    max_per_order: int = 6
+    items: list[FestivalLiveItemState] = Field(default_factory=list)
+    sales: list[FestivalSale] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class PublicFestivalLiveItem(BaseModel):
+    flavor: str
+    photo_url: str = ""
+    price: float = 0
+    remaining: int = 0
+    sold_out: bool = False
+
+
+class PublicFestivalLive(BaseModel):
+    date: str
+    status: str
+    items: list[PublicFestivalLiveItem]
+    updated_at: str | None = None
+
+
+class PublicFestivalLiveResponse(BaseModel):
+    live: PublicFestivalLive | None = None

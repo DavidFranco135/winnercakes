@@ -1663,3 +1663,35 @@ class StoreVisitRepository:
         )
         for snap in old:
             snap.reference.delete()
+
+
+class FestivalLiveRepository:
+    """organizations/{org}/festival_live/{AAAA-MM-DD}: um documento por dia de
+    festival. `update` roda numa transação do Firestore — duas vendas ao mesmo
+    tempo (dois tablets, ou o celular na etapa 2) nunca vendem a mesma fatia."""
+
+    def __init__(self, session: FirestoreSession) -> None:
+        self.session = session
+        self.client = session.client
+
+    def _ref(self, organization_id: UUID, day: str):
+        return _org_ref(self.client, organization_id).collection("festival_live").document(day)
+
+    def get(self, organization_id: UUID, day: str) -> dict | None:
+        snap = self._ref(organization_id, day).get()
+        return snap.to_dict() if snap.exists else None
+
+    def update(self, organization_id: UUID, day: str, fn):
+        from google.cloud import firestore as _fs
+
+        ref = self._ref(organization_id, day)
+
+        @_fs.transactional
+        def run(transaction):
+            snap = ref.get(transaction=transaction)
+            current = snap.to_dict() if snap.exists else None
+            new_data, result = fn(current)
+            transaction.set(ref, new_data)
+            return result
+
+        return run(self.client.transaction())

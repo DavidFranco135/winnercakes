@@ -8,6 +8,7 @@ from src.infrastructure.db.models import (
     BillingEvent,
     CostProfile,
     Customer,
+    FestivalLive,
     FileAsset,
     FinancialTransaction,
     InventoryItem,
@@ -1473,3 +1474,36 @@ class StoreVisitRepository:
             self.session.delete(visitor)
         if old:
             self.session.commit()
+
+
+class FestivalLiveRepository:
+    """Um documento JSON por (organização, data do festival). `update` lê,
+    aplica `fn` e grava de uma vez (com trava de linha no Postgres)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, organization_id: UUID, day: str) -> dict | None:
+        row = self.session.get(FestivalLive, (organization_id, day))
+        return dict(row.data) if row is not None else None
+
+    def update(self, organization_id: UUID, day: str, fn):
+        row = self.session.get(FestivalLive, (organization_id, day), with_for_update=True)
+        current = dict(row.data) if row is not None else None
+        try:
+            new_data, result = fn(current)
+        except Exception:
+            self.session.rollback()
+            raise
+        now = datetime.now(UTC)
+        if row is None:
+            self.session.add(
+                FestivalLive(
+                    organization_id=organization_id, day=day, data=new_data, updated_at=now
+                )
+            )
+        else:
+            row.data = new_data
+            row.updated_at = now
+        self.session.commit()
+        return result

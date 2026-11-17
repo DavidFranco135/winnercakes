@@ -190,3 +190,7 @@ class InvalidWebhookPayloadError(DomainError):
 
 class ImageTooLargeError(DomainError):
     pass
+
+
+class FestivalSaleNotFoundError(DomainError):
+    pass
