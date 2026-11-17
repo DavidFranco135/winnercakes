@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { BirthdaysCard, useBirthdays } from "@/components/BirthdaysCard";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -88,6 +89,7 @@ const FINANCE_SLICES = [
 
 export default function DashboardPage() {
   const { status, accessToken, currentOrganizationId } = useAuth();
+  const birthdays = useBirthdays(`/api/v1/organizations/${currentOrganizationId}`, currentOrganizationId ? accessToken : null);
   const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +156,8 @@ export default function DashboardPage() {
                 ⚠ {data.low_stock_items_count} item(ns) de estoque abaixo do mínimo — ver estoque
               </Link>
             )}
+
+            <BirthdaysCard list={birthdays} />
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <KpiCard label="Receita" value={formatCurrency(data.financial.total_revenue)} tone="positive" href="/financeiro?tipo=receita" />

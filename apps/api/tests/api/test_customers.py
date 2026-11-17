@@ -205,3 +205,37 @@ def test_viewer_cannot_create_customer(client: TestClient):
         headers=auth_headers(viewer["access_token"]),
     )
     assert response.status_code == 403
+
+
+def test_birthdays_upcoming(client, monkeypatch):
+    from datetime import date
+
+    from src.application.customers import use_cases as cu
+
+    owner = register_user(client, organization_name="Doces", email="aniver@doces.io")
+    headers = auth_headers(owner["access_token"])
+    org = client.get("/api/v1/organizations", headers=headers).json()[0]["id"]
+    base = f"/api/v1/organizations/{org}/customers"
+
+    class FakeDT:
+        @staticmethod
+        def now(tz=None):
+            from datetime import datetime
+
+            return datetime(2026, 11, 17, 12, 0)
+
+    monkeypatch.setattr(cu, "datetime", FakeDT)
+    r = client.post(base, json={"name": "Ana", "phone": "21999", "birth_date": "1990-11-17"}, headers=headers)
+    assert r.status_code == 201 and r.json()["birth_date"] == "1990-11-17"
+    client.post(base, json={"name": "Bia", "birth_date": "2000-11-30"}, headers=headers)
+    client.post(base, json={"name": "Caio", "birth_date": "1985-03-01"}, headers=headers)
+    client.post(base, json={"name": "Sem data"}, headers=headers)
+    assert client.post(base, json={"name": "X", "birth_date": "2026-13-40"}, headers=headers).status_code == 422
+
+    rows = client.get(f"{base}/birthdays?days=30", headers=headers).json()
+    assert [(r["name"], r["days_until"], r["turning"]) for r in rows] == [("Ana", 0, 36), ("Bia", 13, 26)]
+    assert date.fromisoformat(rows[1]["next_date"]) == date(2026, 11, 30)
+
+    cid = rows[0]["id"]
+    r = client.patch(f"{base}/{cid}", json={"birth_date": ""}, headers=headers)
+    assert r.json()["birth_date"] is None

@@ -151,6 +151,26 @@ class CreateCustomerRequest(BaseModel):
     document: str | None = Field(default=None, max_length=30)
     address: dict | None = None
     notes: str | None = Field(default=None, max_length=2000)
+    birth_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+
+    @field_validator("birth_date")
+    @classmethod
+    def _birth(cls, v: str | None) -> str | None:
+        return _check_birth(v)
+
+
+def _check_birth(v: str | None) -> str | None:
+    if not v:
+        return v
+    from datetime import date as _date
+
+    try:
+        d = _date.fromisoformat(v)
+    except ValueError as exc:
+        raise ValueError("Data de nascimento inválida.") from exc
+    if d > _date.today() or d.year < 1900:
+        raise ValueError("Data de nascimento inválida.")
+    return v
 
 
 class UpdateCustomerRequest(BaseModel):
@@ -160,6 +180,13 @@ class UpdateCustomerRequest(BaseModel):
     document: str | None = Field(default=None, max_length=30)
     address: dict | None = None
     notes: str | None = Field(default=None, max_length=2000)
+    # "" apaga a data.
+    birth_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+
+    @field_validator("birth_date")
+    @classmethod
+    def _birth(cls, v: str | None) -> str | None:
+        return _check_birth(v)
 
 
 class CustomerResponse(BaseModel):
@@ -170,6 +197,7 @@ class CustomerResponse(BaseModel):
     document: str | None
     address: dict | None
     notes: str | None
+    birth_date: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -1430,3 +1458,13 @@ class MercadoPagoSettingsOut(BaseModel):
 
 class PublicFestivalLiveResponse(BaseModel):
     live: PublicFestivalLive | None = None
+
+
+class CustomerBirthday(BaseModel):
+    id: UUID
+    name: str
+    phone: str | None = None
+    birth_date: str
+    next_date: str  # próxima data do aniversário (AAAA-MM-DD)
+    days_until: int  # 0 = hoje
+    turning: int | None = None  # idade que vai fazer (se o ano foi informado)

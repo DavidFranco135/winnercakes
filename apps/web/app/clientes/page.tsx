@@ -8,6 +8,7 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { Customer, Order, Product } from "@/lib/types";
 import { AppShell } from "@/components/AppShell";
+import { BirthdaysCard, useBirthdays } from "@/components/BirthdaysCard";
 import { SearchInput } from "@/components/SearchInput";
 import { matchesSearch } from "@/lib/search";
 import { STATUS_LABELS, STATUS_TONE, orderStage, type OrderStage } from "@/lib/order-status";
@@ -42,6 +43,8 @@ export default function ClientesPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [document, setDocument] = useState("");
+  const [birth, setBirth] = useState("");
+  const birthdays = useBirthdays(`/api/v1/organizations/${currentOrganizationId}`, currentOrganizationId ? accessToken : null);
 
   const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
 
@@ -79,6 +82,7 @@ export default function ClientesPage() {
     setEmail("");
     setPhone("");
     setDocument("");
+    setBirth("");
     setEditingId(null);
     setShowForm(false);
   }
@@ -89,6 +93,7 @@ export default function ClientesPage() {
     setEmail(c.email ?? "");
     setPhone(c.phone ?? "");
     setDocument(c.document ?? "");
+    setBirth(c.birth_date ?? "");
     setShowForm(true);
   }
 
@@ -103,6 +108,7 @@ export default function ClientesPage() {
         email: email || null,
         phone: phone || null,
         document: document || null,
+        birth_date: birth,
       });
       if (editingId) {
         await apiFetch(`${orgPath}/customers/${editingId}`, { method: "PATCH", accessToken, body });
@@ -164,6 +170,8 @@ export default function ClientesPage() {
       <div className="mx-auto max-w-5xl space-y-6">
         {error && <p className="rounded bg-red-950 p-2 text-sm text-red-300">{error}</p>}
 
+        {!showForm && <BirthdaysCard list={birthdays} showLink={false} />}
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <SearchInput
             value={search}
@@ -188,6 +196,17 @@ export default function ClientesPage() {
             <input type="email" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
             <input placeholder="Telefone" value={phone} onChange={(e) => setPhone(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
             <input placeholder="CPF/CNPJ" value={document} onChange={(e) => setDocument(e.target.value)} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
+            <label className="flex flex-col gap-1 text-xs text-neutral-400 sm:col-span-2 sm:flex-row sm:items-center sm:gap-3">
+              <span className="shrink-0">🎂 Data de nascimento</span>
+              <input
+                type="date"
+                value={birth}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setBirth(e.target.value)}
+                className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white"
+              />
+              <span className="text-neutral-500">Para avisar no Painel quando o aniversário estiver chegando.</span>
+            </label>
             <button type="submit" disabled={isSaving} className="rounded bg-blue-600 px-4 py-2 font-medium disabled:opacity-50 sm:col-span-2">
               {isSaving ? "Salvando…" : editingId ? "Salvar alterações" : "Salvar cliente"}
             </button>
@@ -224,7 +243,10 @@ export default function ClientesPage() {
                         </span>
                       </p>
                       <p className="text-sm text-neutral-400">{c.email ?? "—"}</p>
-                      <p className="text-sm text-neutral-400">{c.phone ?? "—"}</p>
+                      <p className="text-sm text-neutral-400">
+                        {c.phone ?? "—"}
+                        {c.birth_date && <span className="ml-2 text-pink-300">🎂 {formatDay(c.birth_date).slice(0, 5)}</span>}
+                      </p>
                       <p className="flex flex-wrap gap-1.5 pt-0.5 text-xs">
                         {customerOrders.length === 0 ? (
                           <span className="text-neutral-500">Sem pedidos</span>

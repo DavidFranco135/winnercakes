@@ -108,6 +108,7 @@ class Customer:
     document: str | None = None
     address: dict | None = None
     notes: str | None = None
+    birth_date: str | None = None  # "AAAA-MM-DD"
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
     deleted_at: datetime | None = None

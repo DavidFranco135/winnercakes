@@ -99,6 +99,7 @@ export type Customer = {
   address: Record<string, unknown> | null;
   notes: string | null;
   created_at: string;
+  birth_date?: string | null;
 };
 
 export type CustomerHistory = {

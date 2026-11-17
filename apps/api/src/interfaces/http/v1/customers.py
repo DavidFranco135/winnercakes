@@ -10,6 +10,7 @@ from src.interfaces.http.dependencies import get_db, require_org_role
 from src.interfaces.http.errors import as_http_exception
 from src.interfaces.http.v1.schemas import (
     CreateCustomerRequest,
+    CustomerBirthday,
     CustomerHistoryResponse,
     CustomerResponse,
     OrderResponse,
@@ -39,6 +40,7 @@ def create_customer(
         document=payload.document,
         address=payload.address,
         notes=payload.notes,
+        birth_date=payload.birth_date,
     )
     return CustomerResponse.model_validate(customer)
 
@@ -51,6 +53,20 @@ def create_customer(
 def list_customers(organization_id: UUID, db: Session = Depends(get_db)) -> list[CustomerResponse]:
     customers = customer_use_cases.list_customers(db, organization_id=organization_id)
     return [CustomerResponse.model_validate(c) for c in customers]
+
+
+@router.get(
+    "/birthdays",
+    response_model=list[CustomerBirthday],
+    dependencies=[Depends(require_org_role(Role.VIEWER))],
+)
+def list_birthdays(
+    organization_id: UUID, days: int = 30, db: Session = Depends(get_db)
+) -> list[CustomerBirthday]:
+    rows = customer_use_cases.upcoming_birthdays(
+        db, organization_id=organization_id, days=max(0, min(days, 366))
+    )
+    return [CustomerBirthday(**r) for r in rows]
 
 
 @router.get(
@@ -92,6 +108,7 @@ def update_customer(
             document=payload.document,
             address=payload.address,
             notes=payload.notes,
+            birth_date=payload.birth_date,
         )
     except DomainError as exc:
         raise as_http_exception(exc) from exc
