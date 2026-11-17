@@ -87,7 +87,13 @@ export function FestivalsSection({
               <span className="normal-case tracking-normal text-[var(--muted)] sm:hidden">arraste →</span>
             </p>
             {/* Uma faixa só, rolando para o lado: ocupa pouco espaço no celular. */}
-            <div className="-mx-4 flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-4 pb-2 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
+            {/* stopPropagation: arrastar a faixa não pode trocar a aba da loja
+                (a página inteira tem o gesto de deslizar para mudar de aba). */}
+            <div
+              onTouchStart={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => e.stopPropagation()}
+              className="-mx-4 flex snap-x snap-mandatory gap-2.5 overflow-x-auto overscroll-x-contain px-4 pb-2 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
               {rest.map((f, i) => {
                 const p = festivalDateParts(f.date);
                 const sameTime = f.time && f.time === next?.time;
