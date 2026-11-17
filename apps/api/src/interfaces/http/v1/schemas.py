@@ -1310,6 +1310,11 @@ class FestivalLiveConfig(BaseModel):
 
     public_enabled: bool = False
     online_enabled: bool = False
+    # "quantidade": paga N fatias no celular e escolhe o sabor na vitrine.
+    # "sabor": escolhe o sabor já no celular.
+    online_mode: Literal["quantidade", "sabor"] = "quantidade"
+    slice_price: float = Field(default=0, ge=0, le=10000)  # 0 = preço da 1ª fatia
+    online_close_below: int = Field(default=10, ge=0, le=10000)
     status: Literal["preparando", "aberto", "encerrado"] = "preparando"
     # Venda pelo celular: parte das fatias fica só para o balcão.
     counter_reserve_pct: int = Field(default=30, ge=0, le=100)
@@ -1350,7 +1355,7 @@ class FestivalSale(BaseModel):
 
 
 OnlineOrderStatus = Literal[
-    "aguardando", "pago", "retirado", "expirado", "cancelado", "pago_sem_estoque"
+    "aguardando", "pago", "retirado", "expirado", "cancelado", "pago_sem_estoque", "devolvido"
 ]
 
 
@@ -1373,12 +1378,17 @@ class FestivalOnlineOrder(BaseModel):
     pix_code: str = ""
     pix_url: str = ""
     test_mode: bool = False
+    picks: list[FestivalSaleLine] = Field(default_factory=list)  # sabores escolhidos na vitrine
+    refunded_at: str | None = None
 
 
 class FestivalLiveState(BaseModel):
     date: str
     public_enabled: bool = False
     online_enabled: bool = False
+    online_mode: Literal["quantidade", "sabor"] = "quantidade"
+    slice_price: float = 0
+    online_close_below: int = 10
     status: Literal["preparando", "aberto", "encerrado"] = "preparando"
     counter_reserve_pct: int = 30
     max_per_order: int = 6
@@ -1405,6 +1415,9 @@ class PublicFestivalLive(BaseModel):
     status: str
     items: list[PublicFestivalLiveItem]
     online_enabled: bool = False
+    online_mode: str = "quantidade"
+    slice_price: float = 0
+    credits_available: int = 0
     max_per_order: int = 6
     updated_at: str | None = None
 
@@ -1431,15 +1444,21 @@ class PublicFestivalOrder(BaseModel):
     pix_code: str = ""
     pix_url: str = ""
     test_mode: bool = False
+    picks: list[FestivalSaleLine] = Field(default_factory=list)
     date: str = ""
 
 
 class FestivalRedeemRequest(BaseModel):
     code: str = Field(min_length=1, max_length=120)
+    # Modo "quantidade": sabores que o cliente escolheu na vitrine.
+    picks: list[FestivalSaleLineIn] | None = None
 
 
 class FestivalRedeemResult(BaseModel):
-    result: Literal["entregar", "ja_retirado", "nao_pago", "nao_encontrado", "sem_estoque"]
+    result: Literal[
+        "entregar", "escolher", "ja_retirado", "nao_pago", "nao_encontrado", "sem_estoque",
+        "devolvido",
+    ]
     message: str
     order: FestivalOnlineOrder | None = None
     state: FestivalLiveState | None = None
@@ -1468,3 +1487,21 @@ class CustomerBirthday(BaseModel):
     next_date: str  # próxima data do aniversário (AAAA-MM-DD)
     days_until: int  # 0 = hoje
     turning: int | None = None  # idade que vai fazer (se o ano foi informado)
+
+
+class StaffCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+class StaffPassword(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
+
+
+class StaffResponse(BaseModel):
+    user_id: UUID
+    email: str
+    full_name: str | None = None
+    active: bool = True
+    created_at: datetime | None = None

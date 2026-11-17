@@ -13,7 +13,7 @@ import type { StoreAdminResponse, StoreFestival, StoreFlavor } from "@/lib/store
 import { festivalDateParts, formatBRL, upcomingFestivals } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import type { FestivalItem, FestivalOnlineOrder, FestivalSale, FestivalState, FestivalStatus, MercadoPagoSettings, RedeemResult } from "@/lib/festival";
-import { PAYMENT_LABELS, heldByItem, newSaleId, remaining, todayBRT, unitLabel } from "@/lib/festival";
+import { CREDIT_ID, PAYMENT_LABELS, creditsOutstanding, heldByItem, newSaleId, remaining, todayBRT, unitLabel } from "@/lib/festival";
 import { QrScanner } from "@/components/QrScanner";
 import { playAlert, playChime, unlockChime } from "@/lib/chime";
 import QRCode from "qrcode";
@@ -27,6 +27,7 @@ const ORDER_STATUS: Record<string, string> = {
   expirado: "Expirou",
   cancelado: "Cancelado",
   pago_sem_estoque: "Pago sem fatia — devolver",
+  devolvido: "Pix devolvido",
 };
 type Method = "dinheiro" | "cartao" | "pix";
 interface PendingSale {
@@ -75,7 +76,11 @@ function dayLabel(day: string): string {
 }
 
 export default function FestivalPage() {
-  const { status, accessToken, currentOrganizationId } = useAuth();
+  const { status, accessToken, currentOrganizationId, organizations } = useAuth();
+  // Funcionário do caixa: só vende, confere tickets e vê o resumo.
+  const myRole = organizations.find((m) => m.organization.id === currentOrganizationId)?.role;
+  const isStaff = myRole === "CAIXA";
+  const canManage = myRole === "OWNER" || myRole === "ADMIN" || myRole === "MANAGER";
   const router = useRouter();
   const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
 
@@ -110,6 +115,8 @@ export default function FestivalPage() {
   const [toast, setToast] = useState<{ title: string; detail: string; tone: "ok" | "pix" } | null>(null);
   const seenPaid = useRef<{ day: string; ids: Set<string> } | null>(null);
   const [redeemResult, setRedeemResult] = useState<RedeemResult | null>(null);
+  const [pickCart, setPickCart] = useState<Record<string, number>>({});
+  const [refunding, setRefunding] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
   const [manualCode, setManualCode] = useState("");
   const [mp, setMp] = useState<MercadoPagoSettings | null>(null);
@@ -274,6 +281,7 @@ export default function FestivalPage() {
     return m;
   }, [pending, day]);
   const held = useMemo(() => heldByItem(state?.orders), [state]);
+  const reservedCredits = useMemo(() => creditsOutstanding(state?.orders), [state]);
   const left = (it: FestivalItem) => Math.max(0, remaining(it) - (held[it.id] ?? 0) - (pendingQty[it.id] ?? 0));
 
   const cartLines = Object.entries(cart).filter(([, q]) => q > 0);
@@ -385,20 +393,27 @@ export default function FestivalPage() {
 
   // ---- Retirada (ticket do celular) ----
   const redeemCode = useCallback(
-    async (code: string) => {
+    async (code: string, picks?: { item_id: string; qty: number }[]) => {
       if (!accessToken || !code.trim()) return;
       setRedeeming(true);
       try {
         const r = await apiFetch<RedeemResult>(`${orgPath}/festival-live/${day}/redeem`, {
           method: "POST",
           accessToken,
-          body: JSON.stringify({ code: code.trim() }),
+          body: JSON.stringify({ code: code.trim(), picks: picks ?? null }),
         });
         setRedeemResult(r);
+        setPickCart({});
         if (r.state) setState(r.state);
         if (r.result === "entregar") playChime();
-        else playAlert();
+        else if (r.result !== "escolher") playAlert();
       } catch (err) {
+        if (picks && err instanceof ApiError) {
+          // Sabor acabou no meio da escolha: mantém o ticket na tela.
+          setError(err.message);
+          load();
+          return;
+        }
         setRedeemResult({
           result: "nao_encontrado",
           message: err instanceof ApiError ? err.message : "Sem internet: não dá para conferir o ticket agora.",
@@ -410,8 +425,27 @@ export default function FestivalPage() {
         setManualCode("");
       }
     },
-    [accessToken, orgPath, day]
+    [accessToken, orgPath, day, load]
   );
+
+  async function refundOrder(o: FestivalOnlineOrder) {
+    if (!accessToken) return;
+    if (!window.confirm(`Devolver o Pix de ${formatBRL(o.total)} para ${o.name} (${o.code})? O pedido fica cancelado.`)) return;
+    setRefunding(true);
+    try {
+      const data = await apiFetch<FestivalState>(`${orgPath}/festival-live/${day}/orders/${o.id}/refund`, {
+        method: "POST",
+        accessToken,
+      });
+      setState(data);
+      setRedeemResult(null);
+      setToast({ title: "Pix devolvido", detail: `${o.code} · ${o.name} · ${formatBRL(o.total)}`, tone: "pix" });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Sem conexão: não deu para devolver agora.");
+    } finally {
+      setRefunding(false);
+    }
+  }
 
   // Cartaz com o QR da fila: abre a loja direto no cardápio ao vivo.
   async function printQueuePoster() {
@@ -502,6 +536,9 @@ export default function FestivalPage() {
           online_enabled: d.online_enabled,
           status: d.status,
           counter_reserve_pct: d.counter_reserve_pct,
+          online_mode: d.online_mode ?? "quantidade",
+          slice_price: d.slice_price ?? 0,
+          online_close_below: d.online_close_below ?? 10,
           max_per_order: d.max_per_order,
           items: d.items.map(({ id, kind, flavor, photo_url, price, slices_total }) => ({ id, kind: kind ?? "fatia", flavor, photo_url, price, slices_total })),
         }),
@@ -617,8 +654,8 @@ export default function FestivalPage() {
             <span>{kiosk ? "Sair" : "Tela cheia"}</span>
           </button>
         </div>
-        <div className={`grid grid-cols-4 gap-1 rounded-xl border border-neutral-800 bg-neutral-950 p-1 ${kiosk ? "text-lg" : "text-sm sm:text-base"}`}>
-          {(["vender", "retirada", "cardapio", "resumo"] as Tab[]).map((t) => (
+        <div className={`grid ${isStaff ? "grid-cols-3" : "grid-cols-4"} gap-1 rounded-xl border border-neutral-800 bg-neutral-950 p-1 ${kiosk ? "text-lg" : "text-sm sm:text-base"}`}>
+          {(isStaff ? (["vender", "retirada", "resumo"] as Tab[]) : (["vender", "retirada", "cardapio", "resumo"] as Tab[])).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -639,8 +676,14 @@ export default function FestivalPage() {
           </p>
         )}
 
-        {/* Status rápido */}
-        {draft && (
+        {/* Status rápido (só quem gerencia muda; o caixa só vê) */}
+        {draft && !canManage && (
+          <p className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 text-sm text-neutral-300">
+            Situação: <strong>{STATUS_LABELS[draft.status]}</strong>
+            {draft.online_enabled ? " · venda pelo celular ligada" : ""}
+          </p>
+        )}
+        {draft && canManage && (
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 text-sm">
             <span className="text-neutral-400">Situação:</span>
             {(["preparando", "aberto", "encerrado"] as FestivalStatus[]).map((s) => (
@@ -714,6 +757,11 @@ export default function FestivalPage() {
           ) : (
             <div className={`grid gap-5 ${kiosk ? "lg:grid-cols-[1fr_400px]" : "lg:grid-cols-[1fr_340px]"}`}>
               <div className="space-y-5">
+                {reservedCredits > 0 && (
+                  <p className="rounded-xl border border-sky-800 bg-sky-950/60 px-4 py-3 text-sm text-sky-200">
+                    🔒 {reservedCredits} {reservedCredits === 1 ? "fatia está garantida" : "fatias estão garantidas"} para tickets pagos pelo celular (o cliente escolhe o sabor na vitrine). O caixa não consegue vender essas.
+                  </p>
+                )}
                 {(
                   [
                     ["fatia", "Fatias"],
@@ -881,7 +929,8 @@ export default function FestivalPage() {
         {/* ---------------- RETIRADA ---------------- */}
         {state && tab === "retirada" && (
           <div className="grid gap-5 lg:grid-cols-2">
-            <div className="space-y-3">
+            {/* Com um ticket na tela, a câmera some: o resultado fica em cima, sem rolar. */}
+            <div className={`space-y-3 ${redeemResult ? "hidden lg:block" : ""}`}>
               <QrScanner onCode={redeemCode} paused={redeeming || redeemResult !== null} />
               <form
                 onSubmit={(e) => {
@@ -902,7 +951,71 @@ export default function FestivalPage() {
               <p className="text-sm text-neutral-400">Pelo número, confira também o nome do cliente.</p>
             </div>
             <div>
-              {redeemResult ? (
+              {redeemResult && redeemResult.result === "escolher" && redeemResult.order ? (
+                (() => {
+                  const o = redeemResult.order;
+                  const credit = o.lines.filter((l) => l.item_id === CREDIT_ID).reduce((n, l) => n + l.qty, 0);
+                  const extras = o.lines.filter((l) => l.item_id !== CREDIT_ID);
+                  const chosen = Object.values(pickCart).reduce((n, q) => n + q, 0);
+                  const slices = items.filter((i) => (i.kind ?? "fatia") === "fatia" && i.slices_total > 0);
+                  return (
+                    <div className="space-y-4 rounded-2xl bg-sky-700 p-5 text-white">
+                      <p className="text-3xl font-black leading-tight sm:text-4xl">✓ PAGO · escolher sabores</p>
+                      <p className="text-2xl font-bold">
+                        {o.code} · {o.name}
+                      </p>
+                      <p className="text-lg">
+                        Toque nos sabores que o cliente escolheu: <strong>{chosen} de {credit}</strong>
+                        {extras.length > 0 && <> · e entregar também: {extras.map((l) => `${l.qty}× ${l.flavor}`).join(", ")}</>}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {slices.map((it) => {
+                          const l = Math.max(0, remaining(it) - (held[it.id] ?? 0));
+                          const n = pickCart[it.id] ?? 0;
+                          return (
+                            <button
+                              key={it.id}
+                              disabled={l - n <= 0 || chosen >= credit}
+                              onClick={() => setPickCart((c) => ({ ...c, [it.id]: (c[it.id] ?? 0) + 1 }))}
+                              className={`relative rounded-xl p-3 text-left text-lg font-semibold transition active:scale-[0.97] disabled:opacity-40 ${n > 0 ? "bg-white text-sky-900" : "bg-white/15"}`}
+                            >
+                              {n > 0 && (
+                                <span className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-700 text-sm text-white">{n}</span>
+                              )}
+                              <span className="block leading-tight">{it.flavor}</span>
+                              <span className={`text-sm font-normal ${n > 0 ? "text-sky-800" : "opacity-80"}`}>{l === 0 ? "esgotado" : `${l} na vitrine`}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => setPickCart({})} disabled={chosen === 0} className="rounded-xl bg-white/15 px-4 py-3 text-base font-semibold disabled:opacity-40">
+                          Limpar
+                        </button>
+                        <button
+                          onClick={() => redeemCode(o.token, Object.entries(pickCart).filter(([, q]) => q > 0).map(([item_id, qty]) => ({ item_id, qty })))}
+                          disabled={chosen !== credit || redeeming}
+                          className="flex-1 rounded-xl bg-emerald-500 py-3 text-xl font-bold disabled:opacity-40"
+                        >
+                          {redeeming ? "Registrando…" : `Entregar ${credit} ${credit === 1 ? "fatia" : "fatias"}`}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2 border-t border-white/20 pt-3">
+                        <button
+                          onClick={() => refundOrder(o)}
+                          disabled={refunding}
+                          className="rounded-xl bg-red-600 px-4 py-3 text-base font-semibold disabled:opacity-40"
+                        >
+                          {refunding ? "Devolvendo…" : "Não gostou de nenhum · Devolver Pix"}
+                        </button>
+                        <button onClick={() => setRedeemResult(null)} className="ml-auto rounded-xl bg-white/15 px-4 py-3 text-base">
+                          Voltar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : redeemResult ? (
                 <div
                   className={`space-y-3 rounded-2xl p-6 text-white ${
                     redeemResult.result === "entregar"
@@ -913,14 +1026,22 @@ export default function FestivalPage() {
                   }`}
                 >
                   <p className="text-4xl font-black leading-tight sm:text-5xl">
-                    {redeemResult.result === "entregar" ? "✓ ENTREGAR" : redeemResult.result === "ja_retirado" ? "✕ JÁ RETIRADO" : redeemResult.result === "nao_pago" ? "! NÃO PAGO" : "✕ ATENÇÃO"}
+                    {redeemResult.result === "entregar"
+                      ? "✓ ENTREGAR"
+                      : redeemResult.result === "ja_retirado"
+                        ? "✕ JÁ RETIRADO"
+                        : redeemResult.result === "nao_pago"
+                          ? "! NÃO PAGO"
+                          : redeemResult.result === "devolvido"
+                            ? "✕ PIX DEVOLVIDO"
+                            : "✕ ATENÇÃO"}
                   </p>
                   <p className="text-xl font-semibold">{redeemResult.message}</p>
                   {redeemResult.order && (
                     <div className="rounded-xl bg-black/20 p-4">
                       <p className="text-3xl font-bold">{redeemResult.order.code} · {redeemResult.order.name}</p>
                       <ul className="mt-2 space-y-1 text-2xl">
-                        {redeemResult.order.lines.map((l) => (
+                        {[...(redeemResult.order.picks ?? []), ...redeemResult.order.lines.filter((l) => l.item_id !== CREDIT_ID || !(redeemResult.order?.picks ?? []).length)].map((l) => (
                           <li key={l.item_id}><strong>{l.qty}×</strong> {l.flavor}</li>
                         ))}
                       </ul>
@@ -935,7 +1056,11 @@ export default function FestivalPage() {
                   {redeeming ? "Conferindo…" : "Aponte a câmera para o QR do ticket no celular do cliente."}
                 </div>
               )}
-              <OrdersList orders={(state.orders ?? []).filter((o) => o.status === "pago")} title="Pagos esperando retirada" />
+              <OrdersList
+                orders={(state.orders ?? []).filter((o) => o.status === "pago" || o.status === "pago_sem_estoque")}
+                title="Pagos esperando retirada"
+                onRefund={refundOrder}
+              />
             </div>
           </div>
         )}
@@ -1105,6 +1230,49 @@ export default function FestivalPage() {
                   Imprimir cartaz com QR da fila
                 </button>
               </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    ["quantidade", "Paga a quantidade, escolhe na vitrine", "O cliente paga N fatias no celular e escolhe o sabor olhando a vitrine. Se nenhum agradar, você devolve o Pix pela tela de Retirada."],
+                    ["sabor", "Escolhe o sabor no celular", "O cliente já escolhe o sabor pelo celular e as fatias ficam guardadas para ele."],
+                  ] as const
+                ).map(([mode, title, hint]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => editDraft((d) => ({ ...d, online_mode: mode }))}
+                    className={`rounded-xl border p-3 text-left ${(draft.online_mode ?? "quantidade") === mode ? "border-blue-500 bg-blue-600/15" : "border-neutral-700"}`}
+                  >
+                    <span className="block font-medium text-white">{title}</span>
+                    <span className="block text-xs text-neutral-400">{hint}</span>
+                  </button>
+                ))}
+              </div>
+              {(draft.online_mode ?? "quantidade") === "quantidade" && (
+                <div className="flex flex-wrap gap-4">
+                  <label className="flex items-center gap-2">
+                    Preço da fatia R$
+                    <input
+                      inputMode="decimal"
+                      value={draft.slice_price ? String(draft.slice_price) : ""}
+                      placeholder={String(draft.items.find((i) => (i.kind ?? "fatia") === "fatia" && i.price > 0)?.price ?? "")}
+                      onChange={(e) => editDraft((d) => ({ ...d, slice_price: Math.max(0, Number(e.target.value.replace(",", ".")) || 0) }))}
+                      className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2">
+                    Fechar o celular quando sobrarem
+                    <input
+                      type="number"
+                      min={0}
+                      value={draft.online_close_below ?? 10}
+                      onChange={(e) => editDraft((d) => ({ ...d, online_close_below: Math.max(0, Math.floor(Number(e.target.value) || 0)) }))}
+                      className="w-16 rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+                    />
+                    fatias (o fim fica só para a vitrine)
+                  </label>
+                </div>
+              )}
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2">
                   Guardar para o balcão
@@ -1269,7 +1437,15 @@ export default function FestivalPage() {
   return <AppShell title="Festival ao vivo">{content}</AppShell>;
 }
 
-function OrdersList({ orders, title }: { orders: FestivalOnlineOrder[]; title: string }) {
+function OrdersList({
+  orders,
+  title,
+  onRefund,
+}: {
+  orders: FestivalOnlineOrder[];
+  title: string;
+  onRefund?: (o: FestivalOnlineOrder) => void;
+}) {
   if (orders.length === 0) return null;
   return (
     <div className="mt-4 rounded-xl border border-neutral-800 p-4">
@@ -1284,6 +1460,11 @@ function OrdersList({ orders, title }: { orders: FestivalOnlineOrder[]; title: s
               {ORDER_STATUS[o.status] ?? o.status}
             </span>
             <span className="w-16 shrink-0 text-right">{formatBRL(o.total)}</span>
+            {onRefund && (o.status === "pago" || o.status === "pago_sem_estoque") && (
+              <button onClick={() => onRefund(o)} className="shrink-0 text-xs text-red-400 hover:underline">
+                Devolver Pix
+              </button>
+            )}
           </div>
         ))}
       </div>

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError } from "@/lib/api-client";
 import {
+  CREDIT_ID,
   createFestivalOrder,
   loadPublicFestival,
   saveTicket,
@@ -25,6 +26,7 @@ const REFRESH_MS = 5000;
 export function useLiveFestival(slug: string): PublicFestivalLive | null {
   const [live, setLive] = useState<PublicFestivalLive | null>(null);
   useEffect(() => {
+    if (!slug) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -62,25 +64,28 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
   }, [slug]);
 
   const online = Boolean(live?.online_enabled);
+  // Modo "quantidade": paga N fatias aqui e escolhe o sabor olhando a vitrine.
+  const qtyMode = online && (live?.online_mode ?? "quantidade") === "quantidade";
+  const slicePrice = live?.slice_price ?? 0;
+  const creditsAvailable = live?.credits_available ?? 0;
   const byId = useMemo(() => new Map((live?.items ?? []).map((i) => [i.id, i])), [live]);
-  const lines = Object.entries(cart).filter(([id, q]) => q > 0 && byId.has(id));
+  const kindOf = (id: string) => (id === CREDIT_ID ? "fatia" : (byId.get(id)?.kind ?? "fatia"));
+  const priceOf = (id: string) => (id === CREDIT_ID ? slicePrice : (byId.get(id)?.price ?? 0));
+  const lines = Object.entries(cart).filter(([id, q]) => q > 0 && (id === CREDIT_ID ? qtyMode : byId.has(id)));
   const count = lines.reduce((s, [, q]) => s + q, 0);
-  const sliceCount = lines.reduce((s, [id, q]) => s + ((byId.get(id)?.kind ?? "fatia") === "fatia" ? q : 0), 0);
-  const total = lines.reduce((s, [id, q]) => s + q * (byId.get(id)?.price ?? 0), 0);
+  const sliceCount = lines.reduce((s, [id, q]) => s + (kindOf(id) === "fatia" ? q : 0), 0);
+  const total = lines.reduce((s, [id, q]) => s + q * priceOf(id), 0);
   const maxTotal = live?.max_per_order ?? 6;
 
   function bump(id: string, delta: number) {
-    const it = byId.get(id);
-    if (!it) return;
+    const available = id === CREDIT_ID ? creditsAvailable : byId.get(id)?.online_available;
+    if (available == null) return;
     setCart((c) => {
       const current = c[id] ?? 0;
-      const isSlice = (it.kind ?? "fatia") === "fatia";
-      const others = Object.entries(c).reduce(
-        (s, [k, q]) => (k === id || (byId.get(k)?.kind ?? "fatia") !== "fatia" ? s : s + q),
-        0
-      );
+      const isSlice = kindOf(id) === "fatia";
+      const others = Object.entries(c).reduce((s, [k, q]) => (k === id || kindOf(k) !== "fatia" ? s : s + q), 0);
       const limit = isSlice ? maxTotal - others : Number.POSITIVE_INFINITY;
-      const next = Math.max(0, Math.min(current + delta, it.online_available, limit));
+      const next = Math.max(0, Math.min(current + delta, available, limit));
       return { ...c, [id]: next };
     });
   }
@@ -134,10 +139,52 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
           ))}
         </div>
       )}
-      {online && !closed && (
+      {online && !closed && !qtyMode && (
         <p className="rounded-2xl bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-text)]">
           <strong>Na fila?</strong> Escolha aqui, pague com Pix e retire na banca só mostrando o QR — sem esperar para pagar.
         </p>
+      )}
+      {qtyMode && !closed && (
+        <div className="fx-festival relative overflow-hidden rounded-[28px] bg-[var(--accent)] p-5 text-[var(--accent-ink)] shadow-[0_24px_60px_-30px_var(--accent)] sm:p-7">
+          <span className="pointer-events-none absolute -right-12 -top-16 h-52 w-52 rounded-full bg-white/10 blur-2xl" />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-85">Na fila? Pule o caixa</p>
+              <p className="font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">
+                Pague agora, escolha o sabor na vitrine
+              </p>
+              <p className="text-sm opacity-90">
+                {creditsAvailable > 0
+                  ? `${formatBRL(slicePrice)} a fatia. Na vitrine você escolhe entre os sabores disponíveis — se nenhum agradar, devolvemos o Pix.`
+                  : "As fatias pelo celular acabaram — compre direto na vitrine."}
+              </p>
+            </div>
+            {creditsAvailable > 0 && (
+              <div className="flex shrink-0 items-center justify-center gap-4 rounded-full bg-white/15 p-2">
+                <button
+                  onClick={() => bump(CREDIT_ID, -1)}
+                  disabled={!cart[CREDIT_ID]}
+                  aria-label="Menos uma fatia"
+                  className="h-11 w-11 rounded-full bg-white/20 text-2xl font-semibold disabled:opacity-30"
+                >
+                  −
+                </button>
+                <span className="min-w-[4.5rem] text-center">
+                  <span className="block text-3xl font-bold leading-none">{cart[CREDIT_ID] ?? 0}</span>
+                  <span className="text-[11px] uppercase tracking-wider opacity-85">fatias</span>
+                </span>
+                <button
+                  onClick={() => bump(CREDIT_ID, 1)}
+                  disabled={(cart[CREDIT_ID] ?? 0) >= creditsAvailable || sliceCount >= maxTotal}
+                  aria-label="Mais uma fatia"
+                  className="h-11 w-11 rounded-full bg-white text-2xl font-semibold text-[var(--accent-text)] disabled:opacity-30"
+                >
+                  +
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
       {closed ? (
         <p className="rounded-3xl border border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--muted)]">
@@ -177,7 +224,7 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
               <div className="space-y-0.5 p-3">
                 <p className="text-sm font-semibold leading-snug">{it.flavor}</p>
                 {it.price > 0 && <p className="text-sm text-[var(--accent-text)]">{formatBRL(it.price)}</p>}
-                {online && !it.sold_out && it.price > 0 && (
+                {online && !it.sold_out && it.price > 0 && !(qtyMode && (it.kind ?? "fatia") === "fatia") && (
                   it.online_available > 0 ? (
                     <div className="flex items-center justify-between pt-2">
                       <button
@@ -225,8 +272,14 @@ export function LiveMenu({ live, slug }: { live: PublicFestivalLive | null; slug
       {checkout && (
         <CheckoutSheet
           slug={slug}
-          lines={lines.map(([id, q]) => ({ item_id: id, qty: q, flavor: byId.get(id)?.flavor ?? "", price: byId.get(id)?.price ?? 0 }))}
+          lines={lines.map(([id, q]) => ({
+            item_id: id,
+            qty: q,
+            flavor: id === CREDIT_ID ? "Fatia (sabor na vitrine)" : (byId.get(id)?.flavor ?? ""),
+            price: priceOf(id),
+          }))}
           total={total}
+          qtyMode={qtyMode}
           onClose={() => setCheckout(false)}
         />
       )}
@@ -238,8 +291,10 @@ function CheckoutSheet({
   slug,
   lines,
   total,
+  qtyMode,
   onClose,
 }: {
+  qtyMode: boolean;
   slug: string;
   lines: { item_id: string; qty: number; flavor: string; price: number }[];
   total: number;
@@ -320,7 +375,9 @@ function CheckoutSheet({
         />
         <label className="flex items-start gap-2 text-xs leading-relaxed text-[var(--muted)]">
           <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-0.5" required />
-          As fatias ficam guardadas por 15 minutos para o Pix. Depois de pago, retire na banca mostrando o QR do ticket. Pedido pago e não retirado até o fim do festival não tem reembolso.
+          {qtyMode
+            ? "Você paga a quantidade agora e escolhe o sabor na vitrine, entre os disponíveis na hora. Se nenhum agradar, devolvemos o Pix. Mostre o QR do ticket na banca."
+            : "As fatias ficam guardadas por 15 minutos para o Pix. Depois de pago, retire na banca mostrando o QR do ticket. Pedido pago e não retirado até o fim do festival não tem reembolso."}
         </label>
         {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <button

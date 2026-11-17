@@ -90,6 +90,49 @@ def _online_left(
     return max(0, min(_counter_left(item, held), cap - used))
 
 
+CREDIT_ID = "_fatia"  # linha "N fatias, sabor escolhido na vitrine"
+
+
+def _is_credit(item_id: str) -> bool:
+    return item_id == CREDIT_ID
+
+
+def _slice_price(state: FestivalLiveState) -> float:
+    if state.slice_price > 0:
+        return state.slice_price
+    return next((i.price for i in state.items if i.kind == "fatia" and i.price > 0), 0.0)
+
+
+def _credits_outstanding(
+    state: FestivalLiveState, now: datetime | None = None, skip: str = ""
+) -> int:
+    """Fatias pagas (ou com Pix em andamento) pelo celular que ainda não saíram
+    da vitrine. A vitrine nunca pode ficar com menos fatias do que isso."""
+    moment = (now or datetime.now(UTC)).isoformat()
+    total = 0
+    for o in state.orders:
+        if o.id == skip:
+            continue
+        live_hold = o.status == "aguardando" and o.hold_until > moment
+        if live_hold or o.status == "pago":
+            total += sum(line.qty for line in o.lines if _is_credit(line.item_id))
+    return total
+
+
+def _slices_left(state: FestivalLiveState, held: dict[str, int]) -> int:
+    return sum(_counter_left(i, held) for i in state.items if i.kind == "fatia")
+
+
+def _credit_available(state: FestivalLiveState, held: dict[str, int], now=None) -> int:
+    """Quantas fatias ainda dá para vender pelo celular no modo "quantidade"."""
+    total = sum(i.slices_total for i in state.items if i.kind == "fatia")
+    cap = math.floor(total * (100 - state.counter_reserve_pct) / 100)
+    outstanding = _credits_outstanding(state, now)
+    used = sum(i.sold_online for i in state.items if i.kind == "fatia") + outstanding
+    left = _slices_left(state, held) - outstanding - state.online_close_below
+    return max(0, min(cap - used, left))
+
+
 def _unit(item: FestivalLiveItemState, n: int) -> str:
     if item.kind == "produto":
         return "unidade" if n == 1 else "unidades"
@@ -169,6 +212,9 @@ def save_config(
         state.items = items
         state.public_enabled = config.public_enabled
         state.online_enabled = config.online_enabled
+        state.online_mode = config.online_mode
+        state.slice_price = config.slice_price
+        state.online_close_below = config.online_close_below
         state.status = config.status
         state.counter_reserve_pct = config.counter_reserve_pct
         state.max_per_order = config.max_per_order
@@ -199,6 +245,17 @@ def create_sale(
                 raise InsufficientStockError(
                     f"Só {'resta' if remaining == 1 else 'restam'} {remaining} "
                     f"{_unit(item, remaining)} de {item.flavor}."
+                )
+        # Fatias já pagas pelo celular (sabor a escolher) ficam garantidas.
+        sold_slices = sum(q for i, q in wanted.items() if items[i].kind == "fatia")
+        if sold_slices:
+            outstanding = _credits_outstanding(state)
+            after = _slices_left(state, held) - sold_slices
+            if after < outstanding:
+                free = max(0, _slices_left(state, held) - outstanding)
+                raise InsufficientStockError(
+                    f"Restam fatias reservadas para {outstanding} ticket(s) pago(s) pelo celular. "
+                    f"Livres para o balcão: {free}."
                 )
         lines = []
         for item_id, qty in wanted.items():
@@ -268,6 +325,9 @@ def get_public_live(db: Session, *, slug: str) -> PublicFestivalLiveResponse:
             status=state.status,
             updated_at=state.updated_at,
             online_enabled=online,
+            online_mode=state.online_mode,
+            slice_price=_slice_price(state),
+            credits_available=_credit_available(state, held) if online else 0,
             max_per_order=state.max_per_order,
             items=[
                 PublicFestivalLiveItem(
@@ -278,7 +338,11 @@ def get_public_live(db: Session, *, slug: str) -> PublicFestivalLiveResponse:
                     price=i.price,
                     remaining=_counter_left(i, held),
                     sold_out=i.slices_total - i.sold <= 0,
-                    online_available=_online_left(state, i, held) if online else 0,
+                    online_available=(
+                        _online_left(state, i, held)
+                        if online and (state.online_mode == "sabor" or i.kind == "produto")
+                        else 0
+                    ),
                 )
                 for i in state.items
                 if i.slices_total > 0
@@ -384,6 +448,7 @@ def _public_view(day: str, o: FestivalOnlineOrder) -> PublicFestivalOrder:
         pix_code=o.pix_code if o.status == "aguardando" else "",
         pix_url=o.pix_url if o.status == "aguardando" else "",
         test_mode=o.test_mode,
+        picks=o.picks,
         date=day,
     )
 
@@ -422,15 +487,33 @@ def create_online_order(
                     "Você já tem um pedido esperando o Pix. Pague ou cancele ele primeiro."
                 )
         items = {i.id: i for i in state.items}
+        by_quantity = state.online_mode == "quantidade"
         wanted: dict[str, int] = {}
         for line in payload.lines:
-            if line.item_id not in items:
+            if _is_credit(line.item_id) and by_quantity:
+                pass
+            elif line.item_id not in items:
                 raise InsufficientStockError("Um dos sabores não está mais no cardápio.")
+            elif by_quantity and items[line.item_id].kind == "fatia":
+                raise FestivalOrderError(
+                    "Escolha só a quantidade: o sabor você escolhe na vitrine."
+                )
             wanted[line.item_id] = wanted.get(line.item_id, 0) + line.qty
-        slices = sum(q for i, q in wanted.items() if items[i].kind == "fatia")
+        slices = sum(
+            q for i, q in wanted.items() if _is_credit(i) or items[i].kind == "fatia"
+        )
         if slices > state.max_per_order:
             raise FestivalOrderError(f"Máximo de {state.max_per_order} fatias por pedido.")
         held = _held(state, now)
+        credit_qty = wanted.pop(CREDIT_ID, 0)
+        if credit_qty:
+            free = _credit_available(state, held, now)
+            if credit_qty > free:
+                raise InsufficientStockError(
+                    "As fatias pelo celular acabaram — compre direto na vitrine."
+                    if free == 0
+                    else f"Pelo celular só {'resta' if free == 1 else 'restam'} {free} fatia(s)."
+                )
         for item_id, qty in wanted.items():
             left = _online_left(state, items[item_id], held)
             if qty > left:
@@ -444,6 +527,16 @@ def create_online_order(
             FestivalSaleLine(item_id=i, flavor=items[i].flavor, qty=q, price=items[i].price)
             for i, q in wanted.items()
         ]
+        if credit_qty:
+            lines.insert(
+                0,
+                FestivalSaleLine(
+                    item_id=CREDIT_ID,
+                    flavor="Fatia (sabor na vitrine)",
+                    qty=credit_qty,
+                    price=_slice_price(state),
+                ),
+            )
         total = round(sum(line.qty * line.price for line in lines), 2)
         if total <= 0:
             raise FestivalOrderError("Esses sabores estão sem preço. Peça no balcão.")
@@ -506,16 +599,21 @@ def _apply_paid(state: FestivalLiveState, order: FestivalOnlineOrder) -> None:
     now = datetime.now(UTC)
     if order.status == "expirado" or order.hold_until <= now.isoformat():
         held = _held(state, now)
+        credit = sum(line.qty for line in order.lines if _is_credit(line.item_id))
         ok = all(
-            line.item_id in items and _counter_left(items[line.item_id], held) >= line.qty
+            _is_credit(line.item_id)
+            or (line.item_id in items and _counter_left(items[line.item_id], held) >= line.qty)
             for line in order.lines
+        ) and (
+            not credit
+            or _slices_left(state, held) - _credits_outstanding(state, now, skip=order.id) >= credit
         )
         if not ok:
             order.status = "pago_sem_estoque"
             order.paid_at = now.isoformat()
             return
     for line in order.lines:
-        item = items.get(line.item_id)
+        item = None if _is_credit(line.item_id) else items.get(line.item_id)
         if item is not None:
             item.sold += line.qty
             item.sold_online += line.qty
@@ -598,7 +696,14 @@ def sync_pending(db: Session, *, organization_id: UUID, day: str) -> None:
             _sync_order(db, organization_id, day, o)
 
 
-def redeem(db: Session, *, organization_id: UUID, day: str, code: str) -> FestivalRedeemResult:
+def redeem(
+    db: Session,
+    *,
+    organization_id: UUID,
+    day: str,
+    code: str,
+    picks: list | None = None,
+) -> FestivalRedeemResult:
     """Leitura do ticket no balcão: entrega uma vez só."""
     _check_day(day)
     raw = code.strip()
@@ -621,7 +726,12 @@ def redeem(db: Session, *, organization_id: UUID, day: str, code: str) -> Festiv
     def change(st: FestivalLiveState) -> None:
         o = next(x for x in st.orders if x.id == order.id)
         outcome["order"] = o
-        if o.status == "pago":
+        credit = sum(line.qty for line in o.lines if _is_credit(line.item_id))
+        if o.status == "pago" and credit and not picks:
+            outcome["result"] = "escolher"
+        elif o.status == "pago":
+            if credit:
+                _apply_picks(st, o, credit, picks or [])
             o.status = "retirado"
             o.redeemed_at = _now_iso()
             outcome["result"] = "entregar"
@@ -629,14 +739,22 @@ def redeem(db: Session, *, organization_id: UUID, day: str, code: str) -> Festiv
             outcome["result"] = "ja_retirado"
         elif o.status == "pago_sem_estoque":
             outcome["result"] = "sem_estoque"
+        elif o.status == "devolvido":
+            outcome["result"] = "devolvido"
         else:
             outcome["result"] = "nao_pago"
 
     new_state = _mutate(db, organization_id, day, change)
     o: FestivalOnlineOrder = outcome["order"]
     result = outcome["result"]
+    credit = sum(line.qty for line in o.lines if _is_credit(line.item_id))
     messages = {
         "entregar": f"PAGO — entregar para {o.name}",
+        "escolher": (
+            f"PAGO: {credit} {'fatia' if credit == 1 else 'fatias'} — "
+            f"toque nos sabores que {o.name} escolheu"
+        ),
+        "devolvido": "Pix devolvido — não entregar.",
         "ja_retirado": f"JÁ RETIRADO às {_hhmm(o.redeemed_at)}",
         "sem_estoque": "Pago, mas a fatia acabou antes da confirmação: devolva o Pix.",
         "nao_pago": "Ainda não pago — não entregar.",
@@ -648,3 +766,65 @@ def _hhmm(iso: str | None) -> str:
     if not iso:
         return "—"
     return datetime.fromisoformat(iso).astimezone(_BRT).strftime("%H:%M")
+
+
+def _apply_picks(state: FestivalLiveState, order: FestivalOnlineOrder, credit: int, picks) -> None:
+    """Sabores escolhidos na vitrine para um ticket pago por quantidade."""
+    items = {i.id: i for i in state.items}
+    wanted: dict[str, int] = {}
+    for p in picks:
+        item = items.get(p.item_id)
+        if item is None or item.kind != "fatia":
+            raise InsufficientStockError("Sabor inválido para este ticket.")
+        wanted[p.item_id] = wanted.get(p.item_id, 0) + p.qty
+    if sum(wanted.values()) != credit:
+        raise FestivalOrderError(f"Escolha exatamente {credit} fatia(s) para este ticket.")
+    held = _held(state)
+    for item_id, qty in wanted.items():
+        item = items[item_id]
+        if _counter_left(item, held) < qty:
+            raise InsufficientStockError(f"{item.flavor} acabou — escolha outro sabor.")
+    for item_id, qty in wanted.items():
+        item = items[item_id]
+        item.sold += qty
+        item.sold_online += qty
+    order.picks = [
+        FestivalSaleLine(item_id=i, flavor=items[i].flavor, qty=q, price=items[i].price)
+        for i, q in wanted.items()
+    ]
+
+
+def refund_order(
+    db: Session, *, organization_id: UUID, day: str, order_id: str
+) -> FestivalLiveState:
+    """Devolve o Pix pelo Mercado Pago (cliente não achou sabor que goste)."""
+    _check_day(day)
+    state = get_state(db, organization_id=organization_id, day=day)
+    order = next((o for o in state.orders if o.id == order_id), None)
+    if order is None:
+        raise FestivalOrderError("Pedido não encontrado.")
+    if order.status not in ("pago", "pago_sem_estoque"):
+        raise FestivalOrderError(
+            "Esse pedido já foi retirado." if order.status == "retirado"
+            else "Só dá para devolver pedido pago e ainda não retirado."
+        )
+    mp = _mp_settings(db, organization_id)
+    if not mp.get("access_token") or not order.mp_order_id:
+        raise PaymentProviderError("Mercado Pago não configurado.")
+    mercadopago.refund_order(mp["access_token"], order.mp_order_id)
+
+    def change(st: FestivalLiveState) -> None:
+        o = next(x for x in st.orders if x.id == order_id)
+        if o.status not in ("pago", "pago_sem_estoque"):
+            return
+        if o.status == "pago":
+            items = {i.id: i for i in st.items}
+            for line in o.lines:
+                item = None if _is_credit(line.item_id) else items.get(line.item_id)
+                if item is not None:
+                    item.sold = max(0, item.sold - line.qty)
+                    item.sold_online = max(0, item.sold_online - line.qty)
+        o.status = "devolvido"
+        o.refunded_at = _now_iso()
+
+    return _mutate(db, organization_id, day, change)

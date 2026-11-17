@@ -131,3 +131,27 @@ def cancel_order(token: str, order_id: str) -> None:
         )
     except requests.RequestException:
         pass  # melhor esforço: a cobrança expira sozinha em 30 min
+
+
+def refund_order(token: str, order_id: str) -> None:
+    """Devolução total do Pix (corpo vazio = reembolso total)."""
+    try:
+        res = requests.post(
+            f"{_BASE}/v1/orders/{order_id}/refund",
+            headers=_headers(token, f"refund-{order_id}"),
+            timeout=_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise PaymentProviderError("Não foi possível falar com o Mercado Pago.") from exc
+    if res.status_code >= 300:
+        detail = ""
+        try:
+            detail = (res.json().get("errors") or [{}])[0].get("message", "") or res.json().get(
+                "message", ""
+            )
+        except ValueError:
+            pass
+        suffix = f": {detail}" if detail else ""
+        raise PaymentProviderError(
+            f"Mercado Pago recusou a devolução ({res.status_code}){suffix}."
+        )

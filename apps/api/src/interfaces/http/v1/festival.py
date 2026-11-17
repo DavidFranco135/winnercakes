@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from src.application.festival import use_cases
 from src.domain.auth.roles import Role
 from src.domain.shared.exceptions import DomainError
-from src.interfaces.http.dependencies import get_db, require_org_role
+from src.interfaces.http.dependencies import get_db, require_org_role, require_pdv_or_role
 from src.interfaces.http.errors import as_http_exception
 from src.interfaces.http.v1.schemas import (
     FestivalLiveConfig,
@@ -41,7 +41,7 @@ def _run(fn, response: Response | None = None):
 @router.get(
     "/{day}",
     response_model=FestivalLiveState,
-    dependencies=[Depends(require_org_role(Role.VIEWER))],
+    dependencies=[Depends(require_pdv_or_role(Role.VIEWER))],
 )
 def get_festival(
     organization_id: UUID, day: str, response: Response, db: Session = Depends(get_db)
@@ -73,7 +73,7 @@ def save_festival(
 @router.post(
     "/{day}/sales",
     response_model=FestivalLiveState,
-    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+    dependencies=[Depends(require_pdv_or_role(Role.OPERATOR))],
 )
 def create_festival_sale(
     organization_id: UUID, day: str, payload: FestivalSaleCreate, db: Session = Depends(get_db)
@@ -86,7 +86,7 @@ def create_festival_sale(
 @router.post(
     "/{day}/sales/{sale_id}/cancel",
     response_model=FestivalLiveState,
-    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+    dependencies=[Depends(require_pdv_or_role(Role.OPERATOR))],
 )
 def cancel_festival_sale(
     organization_id: UUID, day: str, sale_id: str, db: Session = Depends(get_db)
@@ -99,13 +99,30 @@ def cancel_festival_sale(
 @router.post(
     "/{day}/redeem",
     response_model=FestivalRedeemResult,
-    dependencies=[Depends(require_org_role(Role.OPERATOR))],
+    dependencies=[Depends(require_pdv_or_role(Role.OPERATOR))],
 )
 def redeem_festival_ticket(
     organization_id: UUID, day: str, payload: FestivalRedeemRequest, db: Session = Depends(get_db)
 ) -> FestivalRedeemResult:
     return _run(
-        lambda: use_cases.redeem(db, organization_id=organization_id, day=day, code=payload.code)
+        lambda: use_cases.redeem(
+            db, organization_id=organization_id, day=day, code=payload.code, picks=payload.picks
+        )
+    )
+
+
+@router.post(
+    "/{day}/orders/{order_id}/refund",
+    response_model=FestivalLiveState,
+    dependencies=[Depends(require_pdv_or_role(Role.OPERATOR))],
+)
+def refund_festival_order(
+    organization_id: UUID, day: str, order_id: str, db: Session = Depends(get_db)
+) -> FestivalLiveState:
+    return _run(
+        lambda: use_cases.refund_order(
+            db, organization_id=organization_id, day=day, order_id=order_id
+        )
     )
 
 

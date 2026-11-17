@@ -194,7 +194,7 @@ def online(client: TestClient, monkeypatch):
         {"id": "ninho", "flavor": "Ninho com morango", "price": 15, "slices_total": 10},
         {"id": "red", "flavor": "Red Velvet", "price": 14, "slices_total": 10},
     ]
-    client.put(base, json=_config(items, online_enabled=True, counter_reserve_pct=30, max_per_order=6), headers=headers)
+    client.put(base, json=_config(items, online_enabled=True, online_mode="sabor", counter_reserve_pct=30, max_per_order=6), headers=headers)
     return {"fake": fake, "org": org_id, "slug": slug, "headers": headers, "base": base}
 
 
@@ -297,3 +297,95 @@ def test_products_like_drinks(client: TestClient):
     assert r.status_code == 409 and "2 unidades" in r.json()["detail"]
     r = client.post(f"{base}/sales", json=_sale([{"item_id": "coca", "qty": 2}, {"item_id": "ninho", "qty": 1}]), headers=headers)
     assert r.json()["sales"][0]["total"] == 27
+
+
+# ------------------ modo "quantidade" (sabor na vitrine) ------------------
+
+def _qty_setup(client, online):
+    items = [
+        {"id": "ninho", "flavor": "Ninho", "price": 10, "slices_total": 8},
+        {"id": "red", "flavor": "Red Velvet", "price": 10, "slices_total": 8},
+        {"id": "coca", "kind": "produto", "flavor": "Coca", "price": 6, "slices_total": 5},
+    ]
+    client.put(
+        online["base"],
+        json=_config(items, online_enabled=True, online_mode="quantidade", counter_reserve_pct=25,
+                     max_per_order=6, online_close_below=2),
+        headers=online["headers"],
+    )
+
+
+def test_quantity_mode_pick_at_counter_and_refund(client: TestClient, online, monkeypatch):
+    _qty_setup(client, online)
+    slug, base, headers, fake = online["slug"], online["base"], online["headers"], online["fake"]
+    refunds = []
+    from src.infrastructure import mercadopago
+
+    monkeypatch.setattr(mercadopago, "refund_order", lambda token, oid: refunds.append(oid))
+    festival_use_cases._public_cache.clear()
+    live = client.get(f"/api/v1/public/stores/{slug}/festival-live").json()["live"]
+    # 16 fatias, 75% para o celular = 12; menos 2 de folga final -> min(12, 14) = 12
+    assert live["online_mode"] == "quantidade" and live["slice_price"] == 10
+    assert live["credits_available"] == 12
+
+    # Escolher sabor no celular é recusado neste modo.
+    r = _order(client, slug, [{"item_id": "ninho", "qty": 1}])
+    assert r.status_code == 409
+    o = _order(client, slug, [{"item_id": "_fatia", "qty": 2}, {"item_id": "coca", "qty": 1}]).json()
+    assert o["total"] == 26
+    fake.paid.add("ORD1")
+    client.get(f"/api/v1/public/stores/{slug}/festival-orders/{o['token']}")
+
+    # Balcão não pode vender as 2 fatias garantidas do ticket.
+    r = client.post(f"{base}/sales", json=_sale([{"item_id": "ninho", "qty": 8}, {"item_id": "red", "qty": 7}]), headers=headers)
+    assert r.status_code == 409 and "reservadas" in r.json()["detail"]
+    client.post(f"{base}/sales", json=_sale([{"item_id": "ninho", "qty": 8}, {"item_id": "red", "qty": 6}]), headers=headers)
+
+    r = client.post(f"{base}/redeem", json={"code": o["token"]}, headers=headers).json()
+    assert r["result"] == "escolher"
+    r = client.post(f"{base}/redeem", json={"code": o["token"], "picks": [{"item_id": "ninho", "qty": 1}, {"item_id": "red", "qty": 1}]}, headers=headers)
+    assert r.status_code == 409  # ninho acabou
+    r = client.post(f"{base}/redeem", json={"code": o["token"], "picks": [{"item_id": "red", "qty": 2}]}, headers=headers).json()
+    assert r["result"] == "entregar"
+    red = next(i for i in r["state"]["items"] if i["id"] == "red")
+    assert red["sold"] == 8
+
+    # Outro ticket pago e devolvido: Coca volta para o estoque.
+    o2 = _order(client, slug, [{"item_id": "coca", "qty": 2}], phone="21911112222").json()
+    fake.paid.add("ORD2")
+    client.get(f"/api/v1/public/stores/{slug}/festival-orders/{o2['token']}")
+    oid = next(x["id"] for x in client.get(base, headers=headers).json()["orders"] if x["token"] == o2["token"])
+    r = client.post(f"{base}/orders/{oid}/refund", headers=headers)
+    assert r.status_code == 200, r.text
+    st = r.json()
+    assert next(x for x in st["orders"] if x["id"] == oid)["status"] == "devolvido"
+    assert next(i for i in st["items"] if i["id"] == "coca")["sold"] == 1
+    assert refunds == ["ORD2"]
+    r = client.post(f"{base}/redeem", json={"code": o2["token"]}, headers=headers).json()
+    assert r["result"] == "devolvido"
+
+
+def test_staff_only_reaches_pdv(client: TestClient, online):
+    base, headers, org = online["base"], online["headers"], online["org"]
+    r = client.post(
+        f"/api/v1/organizations/{org}/staff",
+        json={"full_name": "Joana Caixa", "email": "joana@doces.io", "password": "senha-forte-1"},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    staff_id = r.json()["user_id"]
+    assert [s["email"] for s in client.get(f"/api/v1/organizations/{org}/staff", headers=headers).json()] == ["joana@doces.io"]
+
+    tok = client.post("/api/v1/auth/login", json={"email": "joana@doces.io", "password": "senha-forte-1"}).json()["access_token"]
+    sh = auth_headers(tok)
+    assert client.get(base, headers=sh).status_code == 200
+    r = client.post(f"{base}/sales", json=_sale([{"item_id": "red", "qty": 1}]), headers=sh)
+    assert r.status_code == 200
+    # Resto do sistema: bloqueado.
+    for path in ["customers", "orders", "products", "store", "payments/mercadopago", "staff"]:
+        assert client.get(f"/api/v1/organizations/{org}/{path}", headers=sh).status_code == 403, path
+    assert client.put(base, json=_config(), headers=sh).status_code == 403
+
+    assert client.delete(f"/api/v1/organizations/{org}/staff/{staff_id}", headers=headers).status_code == 204
+    r = client.post("/api/v1/auth/login", json={"email": "joana@doces.io", "password": "senha-forte-1"})
+    assert r.status_code in (401, 403)

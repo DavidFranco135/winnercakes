@@ -49,3 +49,23 @@ def require_org_role(minimum: Role):
         return member
 
     return dependency
+
+
+def require_pdv_or_role(minimum: Role):
+    """Como `require_org_role`, mas também deixa passar o funcionário do caixa
+    (papel CAIXA) — usado só nas rotas do PDV do festival."""
+
+    def dependency(
+        organization_id: UUID,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> OrgMember:
+        member = OrgMemberRepository(db).get(organization_id, current_user.id)
+        if member is None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a member of this organization")
+        role = Role(member.role)
+        if role != Role.CAIXA and not role_at_least(role, minimum):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role for this action")
+        return member
+
+    return dependency

@@ -10,6 +10,8 @@ import { ApiError } from "@/lib/api-client";
 import { cancelFestivalOrder, getFestivalOrder, saveTicket, type PublicFestivalOrder } from "@/lib/festival";
 import { formatBRL, themeVars } from "@/lib/store";
 import { playChime, unlockChime } from "@/lib/chime";
+import { CREDIT_ID } from "@/lib/festival";
+import { useLiveFestival } from "@/components/store/LiveMenu";
 
 function useQr(text: string | null | undefined, dark = "#1f1410") {
   const [url, setUrl] = useState<string>("");
@@ -106,6 +108,8 @@ function Ticket() {
     };
   }, [order?.status]);
 
+  const hasCredit = Boolean(order?.lines.some((l) => l.item_id === CREDIT_ID));
+  const live = useLiveFestival(hasCredit && order?.status === "pago" ? slug : "");
   const pixQr = useQr(order?.status === "aguardando" ? order.pix_code : null);
   const ticketQr = useQr(order?.status === "pago" ? order.token : null);
   const back = slug ? `/loja?s=${encodeURIComponent(slug)}` : "/";
@@ -205,15 +209,44 @@ function Ticket() {
                   <p className="text-center text-xs text-[var(--muted)]">
                     O QR vale uma única retirada. Não mande print para outras pessoas.
                   </p>
+                  {hasCredit && live && (
+                    <div className="space-y-2 rounded-2xl bg-[var(--accent-soft)] p-4">
+                      <p className="text-sm font-semibold text-[var(--accent-text)]">Na vitrine agora (escolha lá):</p>
+                      <ul className="flex flex-wrap gap-1.5 text-xs">
+                        {live.items
+                          .filter((i) => (i.kind ?? "fatia") === "fatia")
+                          .map((i) => (
+                            <li
+                              key={i.flavor}
+                              className={`rounded-full px-2.5 py-1 ${i.sold_out ? "bg-neutral-200 text-neutral-500 line-through" : "bg-white text-[var(--ink)]"}`}
+                            >
+                              {i.flavor}
+                              {!i.sold_out && i.remaining <= 3 ? ` · últimas ${i.remaining}` : ""}
+                            </li>
+                          ))}
+                      </ul>
+                      <p className="text-xs text-[var(--muted)]">Se nenhum sabor agradar, a banca devolve o seu Pix.</p>
+                    </div>
+                  )}
                 </>
               )}
 
               {order.status === "retirado" && (
-                <p className="py-4 text-center text-lg font-semibold">Retirado às {hhmm(order.redeemed_at)}. Bom apetite! 🍰</p>
+                <div className="space-y-2 py-4 text-center">
+                  <p className="text-lg font-semibold">Retirado às {hhmm(order.redeemed_at)}. Bom apetite! 🍰</p>
+                  {order.picks && order.picks.length > 0 && (
+                    <p className="text-sm text-[var(--muted)]">{order.picks.map((p) => `${p.qty}× ${p.flavor}`).join(", ")}</p>
+                  )}
+                </div>
               )}
               {order.status === "pago_sem_estoque" && (
                 <p className="rounded-xl bg-amber-100 p-4 text-sm text-amber-900">
                   Recebemos seu Pix, mas a fatia acabou antes da confirmação. Mostre esta tela na banca para a devolução.
+                </p>
+              )}
+              {order.status === "devolvido" && (
+                <p className="rounded-xl bg-sky-50 p-4 text-sm text-sky-900">
+                  Pix devolvido. O valor volta para a sua conta pelo próprio banco, normalmente na hora.
                 </p>
               )}
               {(order.status === "expirado" || order.status === "cancelado") && (

@@ -7,9 +7,12 @@ class Role(StrEnum):
     MANAGER = "MANAGER"
     OPERATOR = "OPERATOR"
     VIEWER = "VIEWER"
+    # Funcionário do caixa: só o PDV do festival (vender, retirada, resumo).
+    CAIXA = "CAIXA"
 
 
 _ROLE_RANK: dict[Role, int] = {
+    Role.CAIXA: 0,  # abaixo de VIEWER: não enxerga o resto do sistema
     Role.VIEWER: 1,
     Role.OPERATOR: 2,
     Role.MANAGER: 3,

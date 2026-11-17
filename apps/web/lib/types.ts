@@ -1,4 +1,4 @@
-export type Role = "OWNER" | "ADMIN" | "MANAGER" | "OPERATOR" | "VIEWER";
+export type Role = "OWNER" | "ADMIN" | "MANAGER" | "OPERATOR" | "VIEWER" | "CAIXA";
 
 export type Organization = {
   id: string;

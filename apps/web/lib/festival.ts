@@ -17,7 +17,17 @@ export interface FestivalItem {
   sold_online?: number;
 }
 
-export type OnlineOrderStatus = "aguardando" | "pago" | "retirado" | "expirado" | "cancelado" | "pago_sem_estoque";
+export type OnlineOrderStatus =
+  | "aguardando"
+  | "pago"
+  | "retirado"
+  | "expirado"
+  | "cancelado"
+  | "pago_sem_estoque"
+  | "devolvido";
+
+export const CREDIT_ID = "_fatia";
+export type OnlineMode = "quantidade" | "sabor";
 
 export interface FestivalOnlineOrder {
   id: string;
@@ -33,6 +43,8 @@ export interface FestivalOnlineOrder {
   paid_at: string | null;
   redeemed_at: string | null;
   test_mode: boolean;
+  picks?: FestivalSaleLine[];
+  refunded_at?: string | null;
 }
 
 export interface FestivalSaleLine {
@@ -58,6 +70,9 @@ export interface FestivalState {
   date: string;
   public_enabled: boolean;
   online_enabled: boolean;
+  online_mode?: OnlineMode;
+  slice_price?: number;
+  online_close_below?: number;
   orders: FestivalOnlineOrder[];
   status: FestivalStatus;
   counter_reserve_pct: number;
@@ -81,6 +96,9 @@ export interface PublicFestivalLive {
     online_available: number;
   }[];
   online_enabled: boolean;
+  online_mode?: OnlineMode;
+  slice_price?: number;
+  credits_available?: number;
   max_per_order: number;
   updated_at: string | null;
 }
@@ -99,11 +117,12 @@ export interface PublicFestivalOrder {
   pix_code: string;
   pix_url: string;
   test_mode: boolean;
+  picks?: FestivalSaleLine[];
   date: string;
 }
 
 export interface RedeemResult {
-  result: "entregar" | "ja_retirado" | "nao_pago" | "nao_encontrado" | "sem_estoque";
+  result: "entregar" | "escolher" | "ja_retirado" | "nao_pago" | "nao_encontrado" | "sem_estoque" | "devolvido";
   message: string;
   order: FestivalOnlineOrder | null;
   state: FestivalState | null;
@@ -116,6 +135,17 @@ export interface MercadoPagoSettings {
 }
 
 /** Fatias seguradas por pedidos do celular esperando o Pix. */
+/** Fatias pagas (ou com Pix em andamento) pelo celular, sabor ainda a escolher. */
+export function creditsOutstanding(orders: FestivalOnlineOrder[] | undefined, now = Date.now()): number {
+  let total = 0;
+  for (const o of orders ?? []) {
+    const hold = o.status === "aguardando" && new Date(o.hold_until).getTime() > now;
+    if (!hold && o.status !== "pago") continue;
+    for (const l of o.lines) if (l.item_id === CREDIT_ID) total += l.qty;
+  }
+  return total;
+}
+
 export function heldByItem(orders: FestivalOnlineOrder[] | undefined, now = Date.now()): Record<string, number> {
   const held: Record<string, number> = {};
   for (const o of orders ?? []) {

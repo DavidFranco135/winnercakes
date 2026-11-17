@@ -19,6 +19,7 @@ from src.interfaces.http.v1.orders import router as orders_router
 from src.interfaces.http.v1.organizations import router as organizations_router
 from src.interfaces.http.v1.products import router as products_router
 from src.interfaces.http.v1.projects import router as projects_router
+from src.interfaces.http.v1.staff import router as staff_router
 from src.interfaces.http.v1.store import public_router as store_public_router
 from src.interfaces.http.v1.store import router as store_router
 from src.interfaces.http.v1.uploads import router as uploads_router
@@ -48,3 +49,4 @@ router.include_router(store_public_router)
 router.include_router(festival_router)
 router.include_router(festival_public_router)
 router.include_router(festival_payments_router)
+router.include_router(staff_router)

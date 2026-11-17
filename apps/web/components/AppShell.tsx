@@ -10,6 +10,7 @@ type NavItem = {
   href: string;
   label: string;
   icon: (props: { className?: string }) => React.ReactElement;
+  adminOnly?: boolean;
 };
 
 function IconHome({ className }: { className?: string }) {
@@ -139,12 +140,27 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/precificacao", label: "Precificação", icon: IconPricing },
   { href: "/maquinas", label: "Fornos", icon: IconCpu },
   { href: "/materiais", label: "Ingredientes", icon: IconLayers },
+  { href: "/funcionarios", label: "Funcionários", icon: IconUsers, adminOnly: true },
 ];
 
-function SidebarContent({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+// Funcionário do caixa só enxerga o PDV do festival.
+const STAFF_HOME = "/festival";
+
+function SidebarContent({
+  pathname,
+  onNavigate,
+  role,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+  role?: string;
+}) {
+  const isAdmin = role === "OWNER" || role === "ADMIN";
+  const items =
+    role === "CAIXA" ? NAV_ITEMS.filter((i) => i.href === STAFF_HOME) : NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
   return (
     <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const active = pathname === item.href || pathname.startsWith(item.href + "/");
         const Icon = item.icon;
         return (
@@ -172,6 +188,10 @@ export function AppShell({ title, children }: { title?: string; children: React.
   const router = useRouter();
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const role = organizations.find((m) => m.organization.id === currentOrganizationId)?.role;
+  useEffect(() => {
+    if (role === "CAIXA" && pathname !== STAFF_HOME) router.replace(STAFF_HOME);
+  }, [role, pathname, router]);
   // Menu lateral fixo só quando a pessoa quer (e a tela é larga); no resto ele
   // vira uma gaveta que desliza por cima, sem apertar o conteúdo.
   const [pinned, setPinned] = useState(false);
@@ -241,7 +261,7 @@ export function AppShell({ title, children }: { title?: string; children: React.
             </svg>
           </button>
         </div>
-        <SidebarContent pathname={pathname} />
+        <SidebarContent pathname={pathname} role={role} />
       </aside>
       )}
 
@@ -267,7 +287,7 @@ export function AppShell({ title, children }: { title?: string; children: React.
                 </svg>
               </button>
             </div>
-            <SidebarContent pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
+            <SidebarContent pathname={pathname} role={role} onNavigate={() => setMobileNavOpen(false)} />
             <button
               onClick={() => setPin(true)}
               className="mx-3 mb-4 mt-auto hidden rounded-lg border border-neutral-800 px-3 py-2 text-left text-xs text-neutral-400 hover:bg-neutral-900 lg:block"
