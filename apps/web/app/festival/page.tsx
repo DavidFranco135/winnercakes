@@ -15,6 +15,7 @@ import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import type { FestivalItem, FestivalOnlineOrder, FestivalSale, FestivalState, FestivalStatus, MercadoPagoSettings, RedeemResult } from "@/lib/festival";
 import { PAYMENT_LABELS, heldByItem, newSaleId, remaining, todayBRT, unitLabel } from "@/lib/festival";
 import { QrScanner } from "@/components/QrScanner";
+import { playAlert, playChime, unlockChime } from "@/lib/chime";
 import QRCode from "qrcode";
 
 type Tab = "vender" | "retirada" | "cardapio" | "resumo";
@@ -106,6 +107,8 @@ export default function FestivalPage() {
   const [method, setMethod] = useState<Method>("dinheiro");
   const [received, setReceived] = useState("");
   const [selling, setSelling] = useState(false);
+  const [toast, setToast] = useState<{ title: string; detail: string; tone: "ok" | "pix" } | null>(null);
+  const seenPaid = useRef<{ day: string; ids: Set<string> } | null>(null);
   const [redeemResult, setRedeemResult] = useState<RedeemResult | null>(null);
   const [redeeming, setRedeeming] = useState(false);
   const [manualCode, setManualCode] = useState("");
@@ -165,9 +168,48 @@ export default function FestivalPage() {
   // Outro tablet vendendo junto: atualiza o estoque a cada 10 s.
   useEffect(() => {
     if (tab === "cardapio") return;
-    const id = setInterval(load, 10000);
+    const id = setInterval(load, 3000);
     return () => clearInterval(id);
   }, [tab, load]);
+
+  // Pix do celular confirmado: aviso na tela + sininho. Na primeira carga só
+  // memoriza os que já estavam pagos (não toca por pedidos antigos).
+  useEffect(() => {
+    if (!state) return;
+    const paid = state.orders.filter((o) => o.status === "pago" || o.status === "retirado");
+    if (seenPaid.current === null || seenPaid.current.day !== state.date) {
+      seenPaid.current = { day: state.date, ids: new Set(paid.map((o) => o.id)) };
+      return;
+    }
+    const seen = seenPaid.current.ids;
+    const fresh = paid.filter((o) => !seen.has(o.id));
+    for (const o of fresh) seen.add(o.id);
+    if (fresh.length > 0) {
+      const o = fresh[fresh.length - 1];
+      const t = setTimeout(() => {
+        setToast({
+          title: "Pix recebido pelo celular",
+          detail: `${o.code} · ${o.name} · ${formatBRL(o.total)} — ${o.lines.map((l) => `${l.qty}× ${l.flavor}`).join(", ")}`,
+          tone: "pix",
+        });
+        playChime();
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [state]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Libera o som no primeiro toque na tela (exigência dos navegadores).
+  useEffect(() => {
+    const on = () => unlockChime();
+    window.addEventListener("pointerdown", on, { once: true });
+    return () => window.removeEventListener("pointerdown", on);
+  }, []);
 
   // Sem edição pendente, o cardápio mostrado é o do servidor.
   const draft = dirty ? draftEdit : state;
@@ -224,6 +266,7 @@ export default function FestivalPage() {
   }, [flushPending]);
 
   const items = useMemo(() => state?.items ?? [], [state]);
+  const paidWaiting = (state?.orders ?? []).filter((o) => o.status === "pago").length;
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const pendingQty = useMemo(() => {
     const m: Record<string, number> = {};
@@ -269,7 +312,12 @@ export default function FestivalPage() {
       setState(data);
       setCart({});
       setReceived("");
-      setNotice(change != null && change > 0 ? `Venda registrada · troco ${formatBRL(change)}` : "Venda registrada");
+      setToast({
+        title: "Venda concluída",
+        detail: `${formatBRL(cartTotal)} · ${PAYMENT_LABELS[method]}${change != null && change > 0 ? ` · troco ${formatBRL(change)}` : ""}`,
+        tone: "ok",
+      });
+      playChime();
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -309,6 +357,12 @@ export default function FestivalPage() {
     }
   }
 
+  useEffect(() => {
+    if (!kiosk) return;
+    document.documentElement.classList.add("app-scale");
+    return () => document.documentElement.classList.remove("app-scale");
+  }, [kiosk]);
+
   function toggleKiosk() {
     const next = !kiosk;
     setKiosk(next);
@@ -342,7 +396,8 @@ export default function FestivalPage() {
         });
         setRedeemResult(r);
         if (r.state) setState(r.state);
-        if (navigator.vibrate) navigator.vibrate(r.result === "entregar" ? 120 : [80, 60, 80, 60, 200]);
+        if (r.result === "entregar") playChime();
+        else playAlert();
       } catch (err) {
         setRedeemResult({
           result: "nao_encontrado",
@@ -512,53 +567,69 @@ export default function FestivalPage() {
 
   const content = (
       <div className={`mx-auto space-y-5 ${kiosk ? "max-w-none" : "max-w-6xl"}`}>
-        {/* Data + abas */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <select
-              value={day}
-              onChange={(e) => setDay(e.target.value)}
-              className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        {toast && (
+          <div className="pointer-events-none fixed inset-x-3 top-3 z-[100] flex justify-center">
+            <div
+              className={`pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded-2xl p-4 text-white shadow-2xl ring-1 ring-white/10 backdrop-blur ${
+                toast.tone === "pix" ? "bg-sky-700/95" : "bg-emerald-700/95"
+              }`}
+              onClick={() => setToast(null)}
+              role="status"
             >
-              {dateOptions.map((d) => (
-                <option key={d} value={d}>
-                  {dayLabel(d)}
-                  {festivals.find((f) => f.date === d) ? ` · ${festivals.find((f) => f.date === d)!.place}` : ""}
-                </option>
-              ))}
-            </select>
-            <input
-              type="date"
-              value={day}
-              onChange={(e) => e.target.value && setDay(e.target.value)}
-              className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm"
-              aria-label="Outra data"
-            />
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 text-xl">{toast.tone === "pix" ? "📱" : "✓"}</span>
+              <span className="min-w-0">
+                <span className="block text-lg font-bold">{toast.title}</span>
+                <span className="block text-sm opacity-90">{toast.detail}</span>
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-          {kiosk && <span className="hidden whitespace-nowrap text-lg font-bold xl:inline">PDV · Winner Cakes</span>}
-          <div className={`flex rounded-xl border border-neutral-800 bg-neutral-950 p-1 ${kiosk ? "text-base" : "text-sm"}`}>
-            {(["vender", "retirada", "cardapio", "resumo"] as Tab[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`rounded-lg px-4 py-2 font-medium ${tab === t ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}
-              >
-                {t === "vender" ? "Vender" : t === "retirada" ? "Retirada" : t === "cardapio" ? "Cardápio do dia" : "Resumo"}
-              </button>
+        )}
+        {/* Data + abas: quebra em linhas no celular/tablet, nada de rolar para o lado */}
+        <div className="flex flex-wrap items-center gap-2">
+          {kiosk && <span className="mr-2 whitespace-nowrap text-xl font-bold">PDV · Winner Cakes</span>}
+          <select
+            value={day}
+            onChange={(e) => setDay(e.target.value)}
+            className={`min-w-0 max-w-full flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 sm:flex-none ${kiosk ? "text-base" : "text-sm"}`}
+          >
+            {dateOptions.map((d) => (
+              <option key={d} value={d}>
+                {dayLabel(d)}
+                {festivals.find((f) => f.date === d) ? ` · ${festivals.find((f) => f.date === d)!.place}` : ""}
+              </option>
             ))}
-          </div>
+          </select>
+          <input
+            type="date"
+            value={day}
+            onChange={(e) => e.target.value && setDay(e.target.value)}
+            className="hidden rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-2.5 text-sm sm:block"
+            aria-label="Outra data"
+          />
           <button
             onClick={toggleKiosk}
             title={kiosk ? "Sair da tela cheia" : "Tela cheia (PDV)"}
-            className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium ${kiosk ? "border-neutral-600 text-neutral-200" : "border-blue-600 bg-blue-600/15 text-blue-200"}`}
+            className={`ml-auto flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium ${kiosk ? "border-neutral-600 text-neutral-200" : "border-blue-600 bg-blue-600/15 text-blue-200"}`}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-4 w-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-5 w-5">
               {kiosk ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
             </svg>
-            <span className="hidden sm:inline">{kiosk ? "Sair da tela cheia" : "Tela cheia"}</span>
+            <span>{kiosk ? "Sair" : "Tela cheia"}</span>
           </button>
-          </div>
+        </div>
+        <div className={`grid grid-cols-4 gap-1 rounded-xl border border-neutral-800 bg-neutral-950 p-1 ${kiosk ? "text-lg" : "text-sm sm:text-base"}`}>
+          {(["vender", "retirada", "cardapio", "resumo"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`rounded-lg px-2 py-3 font-semibold leading-tight ${tab === t ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}
+            >
+              {t === "vender" ? "Vender" : t === "retirada" ? "Retirada" : t === "cardapio" ? "Cardápio" : "Resumo"}
+              {t === "retirada" && paidWaiting > 0 && (
+                <span className="ml-1.5 rounded-full bg-emerald-500 px-1.5 text-xs text-white">{paidWaiting}</span>
+              )}
+            </button>
+          ))}
         </div>
 
         {festivalOfDay && (
@@ -641,7 +712,7 @@ export default function FestivalPage() {
               </button>
             </div>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+            <div className={`grid gap-5 ${kiosk ? "lg:grid-cols-[1fr_400px]" : "lg:grid-cols-[1fr_340px]"}`}>
               <div className="space-y-5">
                 {(
                   [
@@ -665,7 +736,7 @@ export default function FestivalPage() {
                               key={it.id}
                               onClick={() => add(it, 1)}
                               disabled={out || inCart >= l}
-                              className={`relative flex ${product ? "h-28" : "h-36"} flex-col justify-end overflow-hidden rounded-2xl border p-3 text-left transition active:scale-[0.97] ${
+                              className={`relative flex ${product ? (kiosk ? "h-32" : "h-28") : kiosk ? "h-44" : "h-36"} flex-col justify-end overflow-hidden rounded-2xl border p-3 text-left transition active:scale-[0.97] ${
                                 out ? "border-neutral-800 opacity-40" : inCart > 0 ? "border-blue-500 ring-2 ring-blue-500" : "border-neutral-700"
                               } ${product && !it.photo_url ? "bg-gradient-to-br from-sky-900 to-neutral-900" : ""}`}
                             >
@@ -686,8 +757,8 @@ export default function FestivalPage() {
                                   {inCart}
                                 </span>
                               )}
-                              <span className="relative text-base font-semibold leading-tight text-white">{it.flavor}</span>
-                              <span className="relative text-sm text-neutral-200">{formatBRL(it.price)}</span>
+                              <span className={`relative font-semibold leading-tight text-white ${kiosk ? "text-xl" : "text-base"}`}>{it.flavor}</span>
+                              <span className={`relative text-neutral-200 ${kiosk ? "text-base" : "text-sm"}`}>{formatBRL(it.price)}</span>
                             </button>
                           );
                         })}
@@ -698,7 +769,7 @@ export default function FestivalPage() {
               </div>
 
               {/* Pedido */}
-              <div className="space-y-3 rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4 lg:sticky lg:top-4 lg:self-start">
+              <div className={`space-y-3 rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4 lg:sticky lg:top-4 lg:self-start ${kiosk ? "text-base" : ""}`}>
                 <p className="text-sm font-semibold text-neutral-300">Pedido</p>
                 {cartLines.length === 0 ? (
                   <p className="text-sm text-neutral-500">Toque nos sabores para adicionar.</p>
@@ -822,13 +893,13 @@ export default function FestivalPage() {
                 <input
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
-                  placeholder="Ou digite o número do pedido (ex.: 27)"
+                  placeholder="Nº do pedido (ex.: 27)"
                   inputMode="numeric"
-                  className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm"
+                  className="min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-4 text-xl"
                 />
-                <button className="rounded-lg bg-blue-600 px-4 text-sm font-medium">Conferir</button>
+                <button className="rounded-xl bg-blue-600 px-6 text-lg font-semibold">Conferir</button>
               </form>
-              <p className="text-xs text-neutral-500">Pelo número, confira também o nome do cliente.</p>
+              <p className="text-sm text-neutral-400">Pelo número, confira também o nome do cliente.</p>
             </div>
             <div>
               {redeemResult ? (
@@ -841,26 +912,26 @@ export default function FestivalPage() {
                         : "bg-red-700"
                   }`}
                 >
-                  <p className="text-3xl font-black leading-tight">
+                  <p className="text-4xl font-black leading-tight sm:text-5xl">
                     {redeemResult.result === "entregar" ? "✓ ENTREGAR" : redeemResult.result === "ja_retirado" ? "✕ JÁ RETIRADO" : redeemResult.result === "nao_pago" ? "! NÃO PAGO" : "✕ ATENÇÃO"}
                   </p>
-                  <p className="text-lg font-semibold">{redeemResult.message}</p>
+                  <p className="text-xl font-semibold">{redeemResult.message}</p>
                   {redeemResult.order && (
                     <div className="rounded-xl bg-black/20 p-4">
-                      <p className="text-2xl font-bold">{redeemResult.order.code} · {redeemResult.order.name}</p>
-                      <ul className="mt-2 space-y-1 text-lg">
+                      <p className="text-3xl font-bold">{redeemResult.order.code} · {redeemResult.order.name}</p>
+                      <ul className="mt-2 space-y-1 text-2xl">
                         {redeemResult.order.lines.map((l) => (
                           <li key={l.item_id}><strong>{l.qty}×</strong> {l.flavor}</li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  <button onClick={() => setRedeemResult(null)} className="w-full rounded-xl bg-white py-3 text-base font-bold text-neutral-900">
+                  <button onClick={() => setRedeemResult(null)} className="w-full rounded-xl bg-white py-4 text-xl font-bold text-neutral-900">
                     Próximo cliente
                   </button>
                 </div>
               ) : (
-                <div className="flex h-full min-h-[200px] items-center justify-center rounded-2xl border border-dashed border-neutral-700 p-6 text-center text-neutral-400">
+                <div className="flex h-full min-h-[200px] items-center justify-center rounded-2xl border border-dashed border-neutral-700 p-6 text-center text-xl text-neutral-400">
                   {redeeming ? "Conferindo…" : "Aponte a câmera para o QR do ticket no celular do cliente."}
                 </div>
               )}
@@ -1092,7 +1163,7 @@ export default function FestivalPage() {
               </div>
             </div>
 
-            <div className="sticky bottom-3 flex justify-end gap-2">
+            <div className="sticky bottom-0 z-10 -mx-1 flex justify-end gap-2 border-t border-neutral-800 bg-neutral-950/90 px-1 py-3 backdrop-blur">
               {dirty && (
                 <button
                   onClick={() => {
@@ -1205,7 +1276,7 @@ function OrdersList({ orders, title }: { orders: FestivalOnlineOrder[]; title: s
       <p className="mb-2 text-sm font-semibold">{title}</p>
       <div className="max-h-72 space-y-1 overflow-y-auto">
         {[...orders].reverse().map((o) => (
-          <div key={o.id} className="flex items-center gap-2 text-xs text-neutral-300">
+          <div key={o.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-neutral-900 py-1.5 text-sm text-neutral-300">
             <span className="w-12 shrink-0 font-semibold">{o.code}</span>
             <span className="w-24 shrink-0 truncate">{o.name}</span>
             <span className="min-w-0 flex-1 truncate">{o.lines.map((l) => `${l.qty}× ${l.flavor}`).join(", ")}</span>

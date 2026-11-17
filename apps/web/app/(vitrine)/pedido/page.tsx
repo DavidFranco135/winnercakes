@@ -3,12 +3,13 @@
 // Ticket do pedido feito na fila: primeiro mostra o Pix; quando o Mercado Pago
 // confirma, vira o QR de retirada (vale uma vez só, conferido no balcão).
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { ApiError } from "@/lib/api-client";
 import { cancelFestivalOrder, getFestivalOrder, saveTicket, type PublicFestivalOrder } from "@/lib/festival";
 import { formatBRL, themeVars } from "@/lib/store";
+import { playChime, unlockChime } from "@/lib/chime";
 
 function useQr(text: string | null | undefined, dark = "#1f1410") {
   const [url, setUrl] = useState<string>("");
@@ -72,7 +73,7 @@ function Ticket() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
       await load();
-      if (alive) timer = setTimeout(tick, 4000);
+      if (alive) timer = setTimeout(tick, 3000);
     };
     tick();
     return () => {
@@ -80,6 +81,19 @@ function Ticket() {
       if (timer) clearTimeout(timer);
     };
   }, [load]);
+
+  // Pix confirmado enquanto a tela estava aberta: sininho + vibração.
+  const lastStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!order) return;
+    if (lastStatus.current === "aguardando" && order.status === "pago") playChime();
+    lastStatus.current = order.status;
+  }, [order]);
+  useEffect(() => {
+    const on = () => unlockChime();
+    window.addEventListener("pointerdown", on, { once: true });
+    return () => window.removeEventListener("pointerdown", on);
+  }, []);
 
   // Tela acesa enquanto o cliente mostra o QR na banca.
   useEffect(() => {
@@ -181,7 +195,7 @@ function Ticket() {
 
               {order.status === "pago" && (
                 <>
-                  <p className="text-center text-sm font-semibold text-emerald-700">Pagamento confirmado! Mostre este QR na banca.</p>
+                  <p className="text-center text-lg font-bold text-emerald-700">✓ Compra concluída! Mostre este QR na banca.</p>
                   {ticketQr ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={ticketQr} alt="QR code do ticket" className="mx-auto w-72 rounded-2xl" />

@@ -245,7 +245,7 @@ def cancel_sale(
 
 
 # slug → (quando guardou, resposta). Curto: o cardápio muda a cada venda.
-_PUBLIC_TTL_SECONDS = 5.0
+_PUBLIC_TTL_SECONDS = 2.0
 _public_cache: dict[str, tuple[float, PublicFestivalLiveResponse]] = {}
 
 

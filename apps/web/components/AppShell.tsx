@@ -172,6 +172,30 @@ export function AppShell({ title, children }: { title?: string; children: React.
   const router = useRouter();
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Menu lateral fixo só quando a pessoa quer (e a tela é larga); no resto ele
+  // vira uma gaveta que desliza por cima, sem apertar o conteúdo.
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem("sidebar_pinned");
+      } catch {
+        /* sem armazenamento */
+      }
+      setPinned(saved == null ? window.innerWidth >= 1536 : saved === "1");
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+  function setPin(v: boolean) {
+    setPinned(v);
+    setMobileNavOpen(false);
+    try {
+      localStorage.setItem("sidebar_pinned", v ? "1" : "0");
+    } catch {
+      /* sem armazenamento */
+    }
+  }
 
   // On big monitors the whole panel scales up (see globals.css) instead of
   // staying tiny; phones and small laptops are untouched.
@@ -198,24 +222,35 @@ export function AppShell({ title, children }: { title?: string; children: React.
 
   return (
     <div className="flex min-h-screen">
+      {pinned && (
       <aside className="hidden w-60 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 lg:flex">
-        <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4">
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-800 px-5 py-4">
           <span className="flex items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/winner-mark.png" alt="" className="h-8 w-8 rounded-lg" />
             <span className="font-semibold">Winner Cakes</span>
           </span>
+          <button
+            onClick={() => setPin(false)}
+            aria-label="Recolher menu"
+            title="Recolher menu"
+            className="rounded p-1 text-neutral-400 hover:bg-neutral-900"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5">
+              <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </div>
         <SidebarContent pathname={pathname} />
       </aside>
+      )}
 
-      {mobileNavOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
+      <div className={`fixed inset-0 z-40 ${mobileNavOpen ? "" : "pointer-events-none"}`} aria-hidden={!mobileNavOpen}>
           <div
-            className="absolute inset-0 bg-black/60"
+            className={`absolute inset-0 bg-black/60 transition-opacity duration-300 ${mobileNavOpen ? "opacity-100" : "opacity-0"}`}
             onClick={() => setMobileNavOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col border-r border-neutral-800 bg-neutral-950 shadow-xl transition-transform">
+          <aside className={`absolute inset-y-0 left-0 flex w-64 flex-col border-r border-neutral-800 bg-neutral-950 shadow-xl transition-transform duration-300 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"}`}>
             <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
               <span className="flex items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -233,9 +268,14 @@ export function AppShell({ title, children }: { title?: string; children: React.
               </button>
             </div>
             <SidebarContent pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
+            <button
+              onClick={() => setPin(true)}
+              className="mx-3 mb-4 mt-auto hidden rounded-lg border border-neutral-800 px-3 py-2 text-left text-xs text-neutral-400 hover:bg-neutral-900 lg:block"
+            >
+              Fixar menu na lateral
+            </button>
           </aside>
-        </div>
-      )}
+      </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3 sm:px-6">
@@ -243,7 +283,7 @@ export function AppShell({ title, children }: { title?: string; children: React.
             <button
               onClick={() => setMobileNavOpen(true)}
               aria-label="Abrir menu"
-              className="rounded p-1.5 text-neutral-400 hover:bg-neutral-900 lg:hidden"
+              className={`rounded p-1.5 text-neutral-400 hover:bg-neutral-900 ${pinned ? "lg:hidden" : ""}`}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5">
                 <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />

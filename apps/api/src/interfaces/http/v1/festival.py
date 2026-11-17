@@ -170,5 +170,5 @@ def get_public_festival(
     slug: str, response: Response, db: Session = Depends(get_db)
 ) -> PublicFestivalLiveResponse:
     result = _run(lambda: use_cases.get_public_live(db, slug=slug))
-    response.headers["Cache-Control"] = "public, max-age=5"
+    response.headers["Cache-Control"] = "public, max-age=2"
     return result

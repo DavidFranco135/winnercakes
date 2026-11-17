@@ -20,7 +20,7 @@ import { formatBRL } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import { Reveal } from "./ui";
 
-const REFRESH_MS = 15000;
+const REFRESH_MS = 5000;
 
 export function useLiveFestival(slug: string): PublicFestivalLive | null {
   const [live, setLive] = useState<PublicFestivalLive | null>(null);
