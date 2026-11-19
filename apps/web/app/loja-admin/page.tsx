@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch, ApiError, uploadImage } from "@/lib/api-client";
@@ -65,6 +65,14 @@ function Card({ title, hint, children }: { title: string; hint?: string; childre
   );
 }
 
+// Resumo curto do que está salvo (para saber se mudou desde o rascunho).
+function settingsSignature(value: unknown): string {
+  const text = JSON.stringify(value ?? {});
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(31, hash) + text.charCodeAt(i)) | 0;
+  return `${text.length}:${hash}`;
+}
+
 export default function LojaAdminPage() {
   const { status, accessToken, currentOrganizationId } = useAuth();
   const router = useRouter();
@@ -94,6 +102,11 @@ export default function LojaAdminPage() {
   const orgPath = `/api/v1/organizations/${currentOrganizationId}`;
   const draftKey = `loja-admin:${currentOrganizationId}`;
   const [restoredDraft, setRestoredDraft] = useState(false);
+  // "Assinatura" do que estava salvo quando a edição começou. O rascunho só
+  // volta se o salvo ainda for o mesmo; se a loja foi alterada em outro
+  // aparelho ou endereço (ex.: pages.dev × domínio próprio), o rascunho velho
+  // é descartado em vez de cobrir as mudanças mais novas.
+  const savedSig = useRef("");
 
   const load = useCallback(async () => {
     if (!accessToken || !currentOrganizationId) return;
@@ -107,7 +120,11 @@ export default function LojaAdminPage() {
       setProducts(productsData);
       // Alterações não salvas de antes (ex.: o celular fechou o app em segundo
       // plano) voltam por cima do que está salvo.
-      const draft = readDraft<StoreSettings>(draftKey);
+      const sig = settingsSignature(store.settings);
+      savedSig.current = sig;
+      const stored = readDraft<{ base?: string; value?: StoreSettings }>(draftKey);
+      const draft = stored && stored.base === sig && stored.value ? stored.value : null;
+      if (stored && !draft) clearDraft(draftKey);
       if (draft) {
         setSettings({ ...EMPTY, ...store.settings, ...draft });
         setDirty(true);
@@ -125,7 +142,7 @@ export default function LojaAdminPage() {
 
   // Guarda no aparelho o que ainda não foi salvo.
   useEffect(() => {
-    if (dirty && currentOrganizationId) writeDraft(draftKey, settings);
+    if (dirty && currentOrganizationId) writeDraft(draftKey, { base: savedSig.current, value: settings });
   }, [dirty, settings, draftKey, currentOrganizationId]);
 
   function discardDraft() {
@@ -524,6 +541,7 @@ export default function LojaAdminPage() {
         // Subcategorias: a API nova sempre devolve parent_id.
         (body.categories.some((c) => c.parent_id) && savedCats.some((c) => (c as { parent_id?: string }).parent_id === undefined));
       setSettings({ ...EMPTY, ...saved.settings });
+      savedSig.current = settingsSignature(saved.settings);
       setDirty(false);
       clearDraft(draftKey);
       setRestoredDraft(false);
