@@ -885,9 +885,18 @@ export function Storefront({ slug }: { slug: string }) {
                     />
                   }
                   footer={
-                    <p className="text-center font-[family-name:var(--font-display)] text-lg italic text-[var(--accent-text)]">
-                      Feito com amor, para momentos inesquecíveis!
-                    </p>
+                    <div className="flex flex-col items-center gap-3 pt-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/brand/selo-winner.png"
+                        alt="Selo Winner Cakes de qualidade"
+                        loading="lazy"
+                        className="h-28 w-28 drop-shadow-lg sm:h-32 sm:w-32"
+                      />
+                      <p className="text-center font-[family-name:var(--font-display)] text-lg italic text-[var(--accent-text)]">
+                        Feito com amor, para momentos inesquecíveis!
+                      </p>
+                    </div>
                   }
                 />
                 </div>

@@ -947,8 +947,8 @@ export default function LojaAdminPage() {
                       {t === "winner" && (
                         <span
                           aria-hidden
-                          className="h-4 w-4 rounded-full border border-[#c8102e]"
-                          style={{ background: "linear-gradient(135deg, #fff4e4 50%, #c8102e 50%)" }}
+                          className="h-4 w-4 rounded-full border border-[#d73333]"
+                          style={{ background: "linear-gradient(135deg, #fff4e4 50%, #d73333 50%)" }}
                         />
                       )}
                       {label}
@@ -1945,7 +1945,7 @@ const OFFICIAL_FLAVORS: StoreFlavor[] = [
   { name: "Cajuzinho", photo_url: "/brand/sabores/cajuzinho.jpg" },
   { name: "Ferrero Rocher", photo_url: "/brand/sabores/ferrero-rocher.jpg" },
   { name: "Bolo sensação", photo_url: "/brand/sabores/bolo-sensacao.jpg" },
-  { name: "Maracutella", photo_url: "/brand/sabores/maracutella.jpg" },
+  { name: "Maracotella", photo_url: "/brand/sabores/maracotella.jpg" },
   { name: "Pudim de ninho com frutas vermelhas", photo_url: "/brand/sabores/pudim-de-ninho-frutas-vermelhas.jpg" },
   { name: "Torta salgada", photo_url: "/brand/sabores/torta-salgada.jpg" },
   { name: "Torta brownie", photo_url: "/brand/sabores/torta-brownie.jpg" },
@@ -1960,6 +1960,12 @@ const OFFICIAL_FLAVORS: StoreFlavor[] = [
   { name: "Floresta negra", photo_url: "/brand/sabores/floresta-negra.jpg" },
   { name: "Matilda cake", photo_url: "/brand/sabores/matilda-cake.jpg" },
   { name: "Chocolatuda", photo_url: "/brand/sabores/chocolatuda.jpg" },
+  { name: "Maramorango", photo_url: "/brand/sabores/maramorango.jpg" },
+  { name: "Maracujá com chocolate", photo_url: "/brand/sabores/maracuja-com-chocolate.jpg" },
+  { name: "Olho de sogra", photo_url: "/brand/sabores/olho-de-sogra.jpg" },
+  { name: "2 amores com Nutella", photo_url: "/brand/sabores/2-amores-com-nutella.jpg" },
+  { name: "Abacaxi com coco", photo_url: "/brand/sabores/abacaxi-com-coco.jpg" },
+  { name: "Morango com ninho", photo_url: "/brand/sabores/morango-com-ninho.jpg" },
 ];
 
 function FlavorsEditor({

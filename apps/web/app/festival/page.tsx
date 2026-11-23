@@ -483,7 +483,7 @@ export default function FestivalPage() {
 <style>
   @page { size: A4; margin: 14mm; }
   body { font-family: system-ui, sans-serif; text-align: center; color: #3a1a12; margin: 0; }
-  h1 { font-size: 46px; margin: 18px 0 6px; color: #c8102e; }
+  h1 { font-size: 46px; margin: 18px 0 6px; color: #d73333; }
   p { font-size: 24px; margin: 6px 0; }
   img { width: 120mm; height: 120mm; margin: 18px auto; display: block; }
   ol { text-align: left; display: inline-block; font-size: 22px; line-height: 1.6; }

@@ -354,7 +354,7 @@
 .store-splash-initial {
   font-family: var(--font-display), Georgia, serif;
   font-size: 4rem;
-  color: #c8102e;
+  color: #d73333;
 }
 .store-splash-name {
   font-size: 11px;
@@ -622,12 +622,12 @@
 /* Palavras de destaque dos títulos no vermelho da marca. */
 .store-fx[data-theme="winner"] h2 em,
 .store-fx[data-theme="winner"] h1 em {
-  color: #c8102e;
+  color: #d73333;
 }
 
 /* Granulado (confeitos) bem esmaecido nas laterais, como numa cobertura. */
 .store-fx .fx-sprinkles {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cg stroke-linecap='round' stroke-width='7'%3E%3Cpath d='M30 40l14 8' stroke='%23c8102e'/%3E%3Cpath d='M120 30l-6 15' stroke='%23ffc72c'/%3E%3Cpath d='M200 70l15 3' stroke='%23e0314b'/%3E%3Cpath d='M60 130l4-15' stroke='%235f8a3c'/%3E%3Cpath d='M160 150l14 7' stroke='%23d94f8c'/%3E%3Cpath d='M230 200l-12 9' stroke='%23c8102e'/%3E%3Cpath d='M90 220l15-2' stroke='%23ffc72c'/%3E%3Cpath d='M20 230l8-13' stroke='%234a2418'/%3E%3C/g%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cg stroke-linecap='round' stroke-width='7'%3E%3Cpath d='M30 40l14 8' stroke='%23d73333'/%3E%3Cpath d='M120 30l-6 15' stroke='%23ffc72c'/%3E%3Cpath d='M200 70l15 3' stroke='%23e0314b'/%3E%3Cpath d='M60 130l4-15' stroke='%235f8a3c'/%3E%3Cpath d='M160 150l14 7' stroke='%23d94f8c'/%3E%3Cpath d='M230 200l-12 9' stroke='%23d73333'/%3E%3Cpath d='M90 220l15-2' stroke='%23ffc72c'/%3E%3Cpath d='M20 230l8-13' stroke='%234a2418'/%3E%3C/g%3E%3C/svg%3E");
   background-repeat: repeat-y, repeat-y;
   background-position: left -120px top 420px;
   background-size: 260px 260px;
@@ -652,7 +652,7 @@
 input[type="checkbox"],
 input[type="radio"],
 input[type="range"] {
-  accent-color: #c8102e;
+  accent-color: #d73333;
 }
 
 /* Cards da confeitaria (sabores, galeria, tabela de bolos, fatias ao vivo):

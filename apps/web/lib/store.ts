@@ -165,7 +165,7 @@ export type CartLine = { id: string; qty: number; note: string };
 // partir do nome "Winner Cakes"; se for outro, defina NEXT_PUBLIC_STORE_SLUG.
 export const STORE_SLUG = process.env.NEXT_PUBLIC_STORE_SLUG || "winner-cakes";
 
-// Logo oficial da Winner Cakes (selo vermelho com a confeiteira e o nome).
+// Logo oficial da Winner Cakes (identidade nova: WINNER CAKES creme sobre o vermelho).
 // A mesma funciona no claro e no escuro.
 export const BRAND_LOGO = "/brand/winner-logo.png";
 export const BRAND_LOGO_LIGHT = "/brand/winner-logo.png";
@@ -249,7 +249,7 @@ type Accent = {
 export const ACCENTS: Record<string, Accent> = {
   // Paleta Winner Cakes, tirada da logo e dos posts: vermelho da logo,
   // chocolate do bolo, morango, amarelo dos destaques e cores de confeitaria.
-  vermelho: { label: "Vermelho Winner", color: "#c8102e", soft: "#fde3e3", dark: { color: "#ff5a5f", ink: "#1a0507" } },
+  vermelho: { label: "Vermelho Winner", color: "#d73333", soft: "#fde3e3", dark: { color: "#ff5a5f", ink: "#1a0507" } },
   chocolate: { label: "Chocolate", color: "#4a2418", soft: "#f1e2d9", dark: { color: "#e9c6a8", ink: "#1a0d07" } },
   morango: { label: "Morango", color: "#e0314b", soft: "#fde6ea", dark: { color: "#ff7a8c", ink: "#1f0509" } },
   red_velvet: { label: "Red velvet", color: "#8f0f1f", soft: "#f7dfe1", dark: { color: "#f08d97", ink: "#1a0507" } },
@@ -295,7 +295,7 @@ export function themeVars(accent: string, theme: RenderTheme): React.CSSProperti
   const ink = isDark && a.dark ? a.dark.ink : (a.ink ?? "#fffaf2");
   // Rodapé vermelho da logo com letras creme (no escuro, chocolate amargo).
   const footer = isBrand
-    ? { bg: theme === "winner" ? "#b80f22" : "#120806", ink: "#fff4e4", muted: "#ffd9cf", line: "rgba(255,244,228,0.22)" }
+    ? { bg: theme === "winner" ? "#d73333" : "#120806", ink: "#fff4e4", muted: "#ffd9cf", line: "rgba(255,244,228,0.22)" }
     : { bg: t.surface, ink: t.ink, muted: t.muted, line: t.line };
   return {
     "--bg": t.bg,

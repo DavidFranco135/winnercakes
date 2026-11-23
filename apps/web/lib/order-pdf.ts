@@ -92,7 +92,7 @@ const INK: Rgb = [28, 25, 23];
 const MUTED: Rgb = [120, 113, 108];
 const LINE: Rgb = [231, 229, 228];
 const SOFT: Rgb = [250, 246, 242];
-const BLACK: Rgb = [184, 15, 34]; // vermelho da logo Winner (#b80f22), faixa do cabeçalho
+const BLACK: Rgb = [215, 51, 51]; // vermelho da marca Winner (#d73333), faixa do cabeçalho
 const COPPER: Rgb = [255, 236, 214]; // creme (#ffecd6)
 const COPPER_DARK: Rgb = [143, 15, 31]; // red velvet com contraste no branco (#8f0f1f)
 
