@@ -11,6 +11,8 @@ import { useEffect, useRef, useState } from "react";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 
 const LOGO_KEY = "winner-abertura-logo";
+// Na abertura aparece o selo "Winner Cakes de qualidade" (rosto da Gaby).
+const SPLASH_SEAL = "/brand/selo-winner.png";
 // Três voltas (~2,6 s) + explosão que esmaece (~1 s); só então a loja abre.
 const INTRO_MS = 3650;
 const EXIT_MS = 650;
@@ -81,7 +83,8 @@ export function SplashIntro({ logoUrl, name, ready }: { logoUrl?: string; name: 
 
   if (phase === "done") return null;
 
-  const logo = logoUrl || cachedLogo || "";
+  // O selo é fixo da marca; a logo da loja só serve de reserva.
+  const logo = SPLASH_SEAL || logoUrl || cachedLogo || "";
   const loader = phase === "loader";
 
   return (
@@ -135,7 +138,7 @@ export function SplashIntro({ logoUrl, name, ready }: { logoUrl?: string; name: 
               src={imgSrc(logo, IMG_WIDTH.thumb)}
               alt=""
               onLoad={() => setLogoLoaded(true)}
-              className={`store-splash-logo ${logoLoaded ? "is-loaded" : ""}`}
+              className={`store-splash-logo ${logo === SPLASH_SEAL ? "is-seal" : ""} ${logoLoaded ? "is-loaded" : ""}`}
             />
           ) : (
             <span className="store-splash-initial">{name.slice(0, 1).toUpperCase()}</span>
