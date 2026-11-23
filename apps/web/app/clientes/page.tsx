@@ -13,6 +13,48 @@ import { SearchInput } from "@/components/SearchInput";
 import { matchesSearch } from "@/lib/search";
 import { STATUS_LABELS, STATUS_TONE, orderStage, type OrderStage } from "@/lib/order-status";
 
+// Link de cadastro para mandar aos clientes (cai em Clientes ao preencher).
+function SignupLinkCard() {
+  const [copied, setCopied] = useState(false);
+  const url = typeof window !== "undefined" ? `${window.location.origin}/cadastro` : "/cadastro";
+  const message = `Oi! Faça seu cadastro na Winner Cakes, leva menos de 1 minuto 🎂 ${url}`;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-rose-900/60 bg-rose-950/20 p-4 sm:flex-row sm:items-center">
+      <div className="min-w-0 flex-1 space-y-1">
+        <p className="font-semibold">🔗 Link de cadastro para clientes</p>
+        <p className="text-sm text-neutral-400">
+          Mande para quem você quiser: a pessoa preenche nome, WhatsApp, aniversário e bairro e já aparece aqui.
+          Quem envia pedido pelo site com nome e WhatsApp também entra sozinho.
+        </p>
+        <p className="truncate font-mono text-sm text-rose-300">{url}</p>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            } catch {}
+          }}
+          className="rounded-lg border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-900"
+        >
+          {copied ? "Copiado ✓" : "Copiar link"}
+        </button>
+        <a
+          href={`https://wa.me/?text=${encodeURIComponent(message)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-lg bg-[#25d366] px-3 py-2 text-sm font-semibold text-white hover:brightness-105"
+        >
+          Enviar no WhatsApp
+        </a>
+      </div>
+    </div>
+  );
+}
+
 const STAGES: { key: OrderStage; title: string; empty: string }[] = [
   { key: "open", title: "Em andamento", empty: "Nenhum pedido em andamento." },
   { key: "finished", title: "Finalizados", empty: "Nenhum pedido finalizado ainda." },
@@ -181,6 +223,8 @@ export default function ClientesPage() {
 
         {!showForm && <BirthdaysCard list={birthdays} showLink={false} />}
 
+        {!showForm && <SignupLinkCard />}
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <SearchInput
             value={search}
@@ -252,6 +296,13 @@ export default function ClientesPage() {
                         </span>
                       </p>
                       <p className="text-sm text-neutral-400">{c.email ?? "—"}</p>
+                      {(typeof c.address?.bairro === "string" || c.notes?.includes("pelo site") || c.notes?.includes("link de cadastro")) && (
+                        <p className="flex flex-wrap gap-1.5 text-xs">
+                          {typeof c.address?.bairro === "string" && <span className="text-neutral-400">📍 {c.address.bairro}</span>}
+                          {c.notes?.includes("link de cadastro") && <span className="rounded bg-rose-950 px-2 py-0.5 text-rose-300">Cadastro pelo link</span>}
+                          {c.notes?.includes("pedido pelo site") && <span className="rounded bg-emerald-950 px-2 py-0.5 text-emerald-300">Cadastro pelo pedido no site</span>}
+                        </p>
+                      )}
                       <p className="text-sm text-neutral-400">
                         {c.phone ?? "—"}
                         {c.birth_date && <span className="ml-2 text-pink-300">🎂 {formatDay(c.birth_date).slice(0, 5)}</span>}

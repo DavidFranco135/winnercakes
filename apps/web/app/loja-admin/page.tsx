@@ -1945,7 +1945,7 @@ const OFFICIAL_FLAVORS: StoreFlavor[] = [
   { name: "Cajuzinho", photo_url: "/brand/sabores/cajuzinho.jpg" },
   { name: "Ferrero Rocher", photo_url: "/brand/sabores/ferrero-rocher.jpg" },
   { name: "Bolo sensação", photo_url: "/brand/sabores/bolo-sensacao.jpg" },
-  { name: "Maracotella", photo_url: "/brand/sabores/maracotella.jpg" },
+  { name: "Maracutella", photo_url: "/brand/sabores/maracutella.jpg" },
   { name: "Pudim de ninho com frutas vermelhas", photo_url: "/brand/sabores/pudim-de-ninho-frutas-vermelhas.jpg" },
   { name: "Torta salgada", photo_url: "/brand/sabores/torta-salgada.jpg" },
   { name: "Torta brownie", photo_url: "/brand/sabores/torta-brownie.jpg" },

@@ -239,3 +239,31 @@ def test_birthdays_upcoming(client, monkeypatch):
     cid = rows[0]["id"]
     r = client.patch(f"{base}/{cid}", json={"birth_date": ""}, headers=headers)
     assert r.json()["birth_date"] is None
+
+
+def test_public_signup_creates_and_completes_customer(client: TestClient):
+    owner = register_user(client, organization_name="Doce Teste", email="dona@doce.io")
+    headers = auth_headers(owner["access_token"])
+    org = client.get("/api/v1/organizations", headers=headers).json()[0]
+    org_id, slug = org["id"], org["slug"]
+    url = f"/api/v1/public/stores/{slug}/customers"
+
+    r = client.post(url, json={"name": "Ana Lima", "phone": "(21) 99876-5432", "neighborhood": "Mutondo"})
+    assert r.status_code == 204, r.text
+    # Mesmo telefone (com 55 na frente): não duplica, só completa o aniversário.
+    r = client.post(url, json={"name": "Outra", "phone": "5521998765432", "birth_date": "1990-05-04", "source": "pedido"})
+    assert r.status_code == 204, r.text
+    # Robô (campo escondido preenchido) é ignorado.
+    assert client.post(url, json={"name": "Bot", "phone": "21911112222", "website": "x"}).status_code == 204
+    # Telefone inválido.
+    assert client.post(url, json={"name": "Zé", "phone": "123"}).status_code == 422
+
+    customers = client.get(f"/api/v1/organizations/{org_id}/customers", headers=headers).json()
+    assert len(customers) == 1
+    c = customers[0]
+    assert c["name"] == "Ana Lima"
+    assert c["birth_date"] == "1990-05-04"
+    assert c["address"] == {"bairro": "Mutondo"}
+    assert "link de cadastro" in c["notes"]
+
+    assert client.post("/api/v1/public/stores/nao-existe/customers", json={"name": "Ana", "phone": "21998765432"}).status_code == 404

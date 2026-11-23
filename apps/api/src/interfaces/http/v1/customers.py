@@ -1,6 +1,9 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+import time
+from collections import deque
+
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from src.application.customers import use_cases as customer_use_cases
@@ -14,12 +17,60 @@ from src.interfaces.http.v1.schemas import (
     CustomerHistoryResponse,
     CustomerResponse,
     OrderResponse,
+    PublicSignupRequest,
     ProjectResponse,
     QuoteResponse,
     UpdateCustomerRequest,
 )
 
 router = APIRouter(prefix="/organizations/{organization_id}/customers", tags=["customers"])
+public_router = APIRouter(prefix="/public", tags=["public"])
+
+# Limite simples por IP para o cadastro público (por instância).
+_SIGNUP_WINDOW_SECONDS = 3600
+_SIGNUP_MAX_PER_WINDOW = 12
+_signups: dict[str, deque[float]] = {}
+
+
+def _too_many(ip: str) -> bool:
+    now = time.monotonic()
+    hits = _signups.setdefault(ip, deque())
+    while hits and now - hits[0] > _SIGNUP_WINDOW_SECONDS:
+        hits.popleft()
+    if len(hits) >= _SIGNUP_MAX_PER_WINDOW:
+        return True
+    hits.append(now)
+    if len(_signups) > 5000:
+        _signups.clear()
+    return False
+
+
+@public_router.post("/stores/{slug}/customers", status_code=status.HTTP_204_NO_CONTENT)
+def public_signup(
+    slug: str, payload: PublicSignupRequest, request: Request, db: Session = Depends(get_db)
+) -> Response:
+    """Cadastro do cliente pelo site. Sempre responde 204 (não revela se o
+    telefone já estava cadastrado)."""
+    if payload.website:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = forwarded.split(",")[0].strip() or (request.client.host if request.client else "?")
+    if _too_many(ip):
+        return Response(status_code=status.HTTP_429_TOO_MANY_REQUESTS)
+    try:
+        customer_use_cases.public_signup(
+            db,
+            slug=slug,
+            name=payload.name,
+            phone=payload.phone,
+            birth_date=payload.birth_date or None,
+            neighborhood=payload.neighborhood or None,
+            email=payload.email,
+            source=payload.source,
+        )
+    except DomainError as exc:
+        raise as_http_exception(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

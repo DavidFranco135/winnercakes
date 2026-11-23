@@ -173,6 +173,37 @@ def _check_birth(v: str | None) -> str | None:
     return v
 
 
+class PublicSignupRequest(BaseModel):
+    """Cadastro feito pelo próprio cliente no site."""
+
+    name: str = Field(min_length=2, max_length=120)
+    phone: str = Field(min_length=8, max_length=30)
+    birth_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+    neighborhood: str | None = Field(default=None, max_length=80)
+    email: EmailStr | None = None
+    source: str = Field(default="cadastro", pattern=r"^(cadastro|pedido)$")
+    # Campo escondido no formulário: pessoa não preenche, robô sim.
+    website: str | None = Field(default=None, max_length=200)
+
+    @field_validator("name", "neighborhood")
+    @classmethod
+    def _trim(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v: str) -> str:
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if not 10 <= len(digits) <= 13:
+            raise ValueError("WhatsApp inválido: use DDD + número.")
+        return v.strip()
+
+    @field_validator("birth_date")
+    @classmethod
+    def _birth(cls, v: str | None) -> str | None:
+        return _check_birth(v)
+
+
 class UpdateCustomerRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
     email: EmailStr | None = None

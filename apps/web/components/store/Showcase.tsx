@@ -8,6 +8,7 @@ import type { StoreCakeTable, StoreFaq, StoreFlavor, StoreGalleryPhoto } from "@
 import { formatBRL } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import { IconClose, IconPlus, IconWhatsapp, Reveal } from "./ui";
+import { ZoomImage } from "./ZoomImage";
 
 // Miniatura do sabor: as fotos oficiais (/brand/sabores/x.jpg) são quadros com
 // as camadas explicadas; no cartão vai só o recorte do bolo (/brand/sabores/mini/x.jpg)
@@ -126,14 +127,16 @@ export function FlavorsSection({
             </>
           )}
           <figure className="max-h-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <ZoomImage
+              key={current.photo_url}
               src={imgSrc(current.photo_url!, IMG_WIDTH.hero)}
               alt={`${current.name}: camadas do recheio`}
-              className="max-h-[84vh] w-auto max-w-full rounded-2xl object-contain"
+              className="max-h-[80vh] w-auto max-w-full object-contain"
+              onSwipe={(d) => step(d)}
             />
             <figcaption className="pt-3 text-center text-sm text-white/85">
               {current.name} · {(open ?? 0) + 1} de {withPhoto.length}
+              <span className="block text-xs text-white/55">Use dois dedos (ou toque duas vezes) para dar zoom</span>
             </figcaption>
           </figure>
         </div>,

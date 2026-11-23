@@ -18,10 +18,12 @@ import { focusStyle } from "@/lib/focus";
 import { useOverlayHistory } from "@/lib/use-overlay-history";
 import { IconClose, IconMinus, IconPlus, IconTrash, IconWhatsapp } from "./ui";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
+import { maskPhone } from "@/lib/signup";
 import { InstallmentsLine, ProductionEta, TrustBadges } from "./extras";
 
 // when: para quando é a encomenda (data e horário, texto livre).
-export type CustomerInfo = { name: string; extra: string; when?: string };
+// phone/birth: entram no cadastro do cliente (Clientes no gestor) ao enviar.
+export type CustomerInfo = { name: string; extra: string; when?: string; phone?: string; birth?: string };
 
 export function CartDrawer({
   open,
@@ -219,6 +221,28 @@ export function CartDrawer({
                   placeholder="Seu nome"
                   className="w-full rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)]"
                 />
+                <input
+                  value={customer.phone ?? ""}
+                  onChange={(e) => onCustomer({ ...customer, phone: maskPhone(e.target.value) })}
+                  inputMode="tel"
+                  autoComplete="tel-national"
+                  placeholder="Seu WhatsApp com DDD"
+                  className="w-full rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)]"
+                />
+                <label className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--bg)] px-4 py-2 text-sm text-[var(--muted)]">
+                  <span className="shrink-0">🎂 Aniversário</span>
+                  <input
+                    type="date"
+                    value={customer.birth ?? ""}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => onCustomer({ ...customer, birth: e.target.value })}
+                    className="min-w-0 flex-1 bg-transparent py-1 text-[var(--ink)] outline-none"
+                  />
+                  <span className="shrink-0 text-[11px]">opcional</span>
+                </label>
+                <p className="-mt-1 px-1 text-[11px] text-[var(--muted)]">
+                  Com nome e WhatsApp você já fica cadastrado(a) para receber as novidades.
+                </p>
                 <input
                   value={customer.when ?? ""}
                   onChange={(e) => onCustomer({ ...customer, when: e.target.value })}

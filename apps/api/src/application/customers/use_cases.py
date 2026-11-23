@@ -4,10 +4,11 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from src.domain.shared.exceptions import CustomerNotFoundError
+from src.domain.shared.exceptions import CustomerNotFoundError, OrganizationNotFoundError
 from src.infrastructure.db.models import Customer
 from src.infrastructure.repositories import (
     CustomerRepository,
+    OrganizationRepository,
     OrderRepository,
     ProjectRepository,
     QuoteRepository,
@@ -152,3 +153,70 @@ def upcoming_birthdays(db: Session, *, organization_id: UUID, days: int = 30) ->
         )
     result.sort(key=lambda r: (r["days_until"], r["name"].lower()))
     return result
+
+
+_SIGNUP_NOTES = {
+    "cadastro": "Cadastrou-se pelo link de cadastro do site.",
+    "pedido": "Cadastrado ao enviar um pedido pelo site.",
+}
+
+
+def _digits(value: str | None) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def _same_phone(a: str, b: str) -> bool:
+    """Compara telefones ignorando o 55 do Brasil na frente."""
+    if not a or not b:
+        return False
+    strip = lambda d: d[2:] if len(d) > 11 and d.startswith("55") else d  # noqa: E731
+    return strip(a) == strip(b)
+
+
+def public_signup(
+    db: Session,
+    *,
+    slug: str,
+    name: str,
+    phone: str,
+    birth_date: str | None = None,
+    neighborhood: str | None = None,
+    email: str | None = None,
+    source: str = "cadastro",
+) -> None:
+    """Cadastro feito pelo próprio cliente no site (link de cadastro ou ao
+    enviar um pedido). Se o telefone já existe, só completa o que estiver
+    vazio — nunca sobrescreve o que a loja já anotou."""
+    org = OrganizationRepository(db).get_by_slug(slug)
+    if org is None:
+        raise OrganizationNotFoundError(slug)
+    org_id = org.id if isinstance(org.id, UUID) else UUID(str(org.id))
+    digits = _digits(phone)
+    repo = CustomerRepository(db)
+    existing = next((c for c in repo.list_for_org(org_id) if _same_phone(_digits(c.phone), digits)), None)
+    if existing is not None:
+        changed = False
+        if birth_date and not existing.birth_date:
+            existing.birth_date = _valid_birth(birth_date)
+            changed = True
+        if email and not existing.email:
+            existing.email = email
+            changed = True
+        if neighborhood and not (existing.address or {}).get("bairro"):
+            existing.address = {**(existing.address or {}), "bairro": neighborhood}
+            changed = True
+        if changed:
+            db.commit()
+        return
+    customer = repo.create(
+        organization_id=org_id,
+        name=name,
+        email=email or None,
+        phone=phone,
+        document=None,
+        address={"bairro": neighborhood} if neighborhood else None,
+        notes=_SIGNUP_NOTES.get(source, _SIGNUP_NOTES["cadastro"]),
+    )
+    if birth_date:
+        customer.birth_date = _valid_birth(birth_date)
+    db.commit()

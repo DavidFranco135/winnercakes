@@ -5,6 +5,7 @@ from src.interfaces.http.v1.auth import router as auth_router
 from src.interfaces.http.v1.billing import global_router as billing_global_router
 from src.interfaces.http.v1.billing import router as billing_router
 from src.interfaces.http.v1.calculator import router as calculator_router
+from src.interfaces.http.v1.customers import public_router as customers_public_router
 from src.interfaces.http.v1.customers import router as customers_router
 from src.interfaces.http.v1.dashboard import router as dashboard_router
 from src.interfaces.http.v1.festival import payments_router as festival_payments_router
@@ -31,6 +32,7 @@ router.include_router(auth_router)
 router.include_router(users_router)
 router.include_router(organizations_router)
 router.include_router(customers_router)
+router.include_router(customers_public_router)
 router.include_router(projects_router)
 router.include_router(uploads_router)
 router.include_router(calculator_router)
