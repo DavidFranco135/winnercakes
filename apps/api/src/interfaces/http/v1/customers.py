@@ -63,7 +63,7 @@ def public_signup(
             slug=slug,
             name=payload.name,
             phone=payload.phone,
-            birth_date=payload.birth_date or None,
+            birth_date=payload.birth_date,
             neighborhood=payload.neighborhood or None,
             email=payload.email,
             source=payload.source,

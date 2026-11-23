@@ -7,7 +7,7 @@ import { STORE_SLUG } from "@/lib/store";
 export type SignupData = {
   name: string;
   phone: string;
-  birth_date?: string;
+  birth_date: string;
   neighborhood?: string;
   email?: string;
   source: "cadastro" | "pedido";
@@ -36,7 +36,7 @@ export function maskPhone(v: string): string {
 
 export async function signupCustomer(data: SignupData, slug = STORE_SLUG): Promise<void> {
   const body: Record<string, string> = { name: data.name.trim(), phone: data.phone.trim(), source: data.source };
-  if (data.birth_date) body.birth_date = data.birth_date;
+  body.birth_date = data.birth_date;
   if (data.neighborhood?.trim()) body.neighborhood = data.neighborhood.trim();
   if (data.email?.trim()) body.email = data.email.trim();
   if (data.website) body.website = data.website;
@@ -48,14 +48,15 @@ export async function signupCustomer(data: SignupData, slug = STORE_SLUG): Promi
 }
 
 // Pedido enviado: cadastra em segundo plano, uma vez por telefone neste aparelho.
+// Só com nome, WhatsApp e aniversário (o aniversário é obrigatório no cadastro).
 export function signupFromOrder(name: string, phone: string, birth?: string, slug = STORE_SLUG): void {
-  if (name.trim().length < 2 || !validPhone(phone)) return;
+  if (name.trim().length < 2 || !validPhone(phone) || !birth) return;
   const key = `loja-cadastrado:${slug}`;
   const sig = `${phoneDigits(phone)}|${birth ?? ""}`;
   try {
     if (localStorage.getItem(key) === sig) return;
   } catch {}
-  signupCustomer({ name, phone, birth_date: birth || undefined, source: "pedido" }, slug)
+  signupCustomer({ name, phone, birth_date: birth, source: "pedido" }, slug)
     .then(() => {
       try {
         localStorage.setItem(key, sig);

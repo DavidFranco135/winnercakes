@@ -31,10 +31,11 @@ export default function CadastroPage() {
     setError(null);
     if (name.trim().length < 2) return setError("Escreva o seu nome.");
     if (!validPhone(phone)) return setError("Confira o WhatsApp: DDD + número.");
+    if (!birth) return setError("Coloque a sua data de nascimento: é por ela que mandamos a promoção de aniversário.");
     if (!agree) return setError("Marque a autorização para podermos falar com você.");
     setSending(true);
     try {
-      await signupCustomer({ name, phone, birth_date: birth || undefined, neighborhood: bairro, email, source: "cadastro", website });
+      await signupCustomer({ name, phone, birth_date: birth, neighborhood: bairro, email, source: "cadastro", website });
       setDone(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
@@ -42,7 +43,7 @@ export default function CadastroPage() {
         err instanceof ApiError && err.status === 429
           ? "Muitas tentativas. Tente de novo daqui a pouco."
           : err instanceof ApiError && err.status === 422
-            ? "Confira os dados (WhatsApp com DDD, e-mail e data de nascimento)."
+            ? "Confira os dados (WhatsApp com DDD, data de nascimento e e-mail)."
             : "Não foi possível enviar agora. Confira a internet e tente de novo."
       );
     } finally {
@@ -61,7 +62,7 @@ export default function CadastroPage() {
         <p className="max-w-sm text-sm text-[#ffd9cf]">
           {done
             ? "Obrigada! Agora você recebe as novidades da Winner Cakes."
-            : "Leva menos de 1 minuto. Receba as novidades dos festivais e um carinho no seu aniversário 🎂"}
+            : "Leva menos de 1 minuto. Receba as novidades dos festivais e promoções no seu aniversário 🎂"}
         </p>
       </header>
 
@@ -100,7 +101,8 @@ export default function CadastroPage() {
                 />
               </label>
               <label className="block space-y-1.5">
-                <span className="text-sm font-semibold">Data de nascimento</span>
+                <span className="text-sm font-semibold">Data de nascimento *</span>
+                <span className="block text-xs text-[#a8857a]">Para receber as promoções de aniversário.</span>
                 <input
                   className={field}
                   type="date"

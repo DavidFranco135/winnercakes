@@ -178,7 +178,8 @@ class PublicSignupRequest(BaseModel):
 
     name: str = Field(min_length=2, max_length=120)
     phone: str = Field(min_length=8, max_length=30)
-    birth_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+    # Obrigatório: o cadastro existe para mandar promoções de aniversário.
+    birth_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     neighborhood: str | None = Field(default=None, max_length=80)
     email: EmailStr | None = None
     source: str = Field(default="cadastro", pattern=r"^(cadastro|pedido)$")

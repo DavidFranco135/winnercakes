@@ -17,14 +17,14 @@ import { STATUS_LABELS, STATUS_TONE, orderStage, type OrderStage } from "@/lib/o
 function SignupLinkCard() {
   const [copied, setCopied] = useState(false);
   const url = typeof window !== "undefined" ? `${window.location.origin}/cadastro` : "/cadastro";
-  const message = `Oi! Faça seu cadastro na Winner Cakes, leva menos de 1 minuto 🎂 ${url}`;
+  const message = `Oi! Faça seu cadastro na Winner Cakes e receba promoções no seu aniversário 🎂 ${url}`;
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-rose-900/60 bg-rose-950/20 p-4 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1 space-y-1">
         <p className="font-semibold">🔗 Link de cadastro para clientes</p>
         <p className="text-sm text-neutral-400">
-          Mande para quem você quiser: a pessoa preenche nome, WhatsApp, aniversário e bairro e já aparece aqui.
-          Quem envia pedido pelo site com nome e WhatsApp também entra sozinho.
+          Mande para quem você quiser: a pessoa preenche nome, WhatsApp, aniversário (obrigatório) e bairro e já aparece aqui.
+          Quem envia pedido pelo site com nome, WhatsApp e aniversário também entra sozinho.
         </p>
         <p className="truncate font-mono text-sm text-rose-300">{url}</p>
       </div>

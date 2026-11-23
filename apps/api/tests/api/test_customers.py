@@ -248,22 +248,25 @@ def test_public_signup_creates_and_completes_customer(client: TestClient):
     org_id, slug = org["id"], org["slug"]
     url = f"/api/v1/public/stores/{slug}/customers"
 
-    r = client.post(url, json={"name": "Ana Lima", "phone": "(21) 99876-5432", "neighborhood": "Mutondo"})
+    r = client.post(url, json={"name": "Ana Lima", "phone": "(21) 99876-5432", "neighborhood": "Mutondo", "birth_date": "1990-05-04"})
     assert r.status_code == 204, r.text
     # Mesmo telefone (com 55 na frente): não duplica, só completa o aniversário.
-    r = client.post(url, json={"name": "Outra", "phone": "5521998765432", "birth_date": "1990-05-04", "source": "pedido"})
+    r = client.post(url, json={"name": "Outra", "phone": "5521998765432", "birth_date": "1991-06-07", "email": "ana@x.io", "source": "pedido"})
     assert r.status_code == 204, r.text
+    # Sem aniversário não cadastra.
+    assert client.post(url, json={"name": "Sem Data", "phone": "21933334444"}).status_code == 422
     # Robô (campo escondido preenchido) é ignorado.
-    assert client.post(url, json={"name": "Bot", "phone": "21911112222", "website": "x"}).status_code == 204
+    assert client.post(url, json={"name": "Bot", "phone": "21911112222", "birth_date": "1990-01-01", "website": "x"}).status_code == 204
     # Telefone inválido.
-    assert client.post(url, json={"name": "Zé", "phone": "123"}).status_code == 422
+    assert client.post(url, json={"name": "Zé", "phone": "123", "birth_date": "1990-01-01"}).status_code == 422
 
     customers = client.get(f"/api/v1/organizations/{org_id}/customers", headers=headers).json()
     assert len(customers) == 1
     c = customers[0]
     assert c["name"] == "Ana Lima"
-    assert c["birth_date"] == "1990-05-04"
+    assert c["birth_date"] == "1990-05-04"  # a data que já existia não é trocada
+    assert c["email"] == "ana@x.io"
     assert c["address"] == {"bairro": "Mutondo"}
     assert "link de cadastro" in c["notes"]
 
-    assert client.post("/api/v1/public/stores/nao-existe/customers", json={"name": "Ana", "phone": "21998765432"}).status_code == 404
+    assert client.post("/api/v1/public/stores/nao-existe/customers", json={"name": "Ana", "phone": "21998765432", "birth_date": "1990-01-01"}).status_code == 404
