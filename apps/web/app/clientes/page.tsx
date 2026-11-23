@@ -24,7 +24,7 @@ function SignupLinkCard() {
         <p className="font-semibold">🔗 Link de cadastro para clientes</p>
         <p className="text-sm text-neutral-400">
           Mande para quem você quiser: a pessoa preenche nome, WhatsApp, aniversário (obrigatório) e bairro e já aparece aqui.
-          Quem envia pedido pelo site com nome, WhatsApp e aniversário também entra sozinho.
+          Quem envia pedido pelo site com nome e WhatsApp também entra sozinho (se não puser o aniversário, aparece o aviso 🎂 no cliente).
         </p>
         <p className="truncate font-mono text-sm text-rose-300">{url}</p>
       </div>
@@ -305,7 +305,16 @@ export default function ClientesPage() {
                       )}
                       <p className="text-sm text-neutral-400">
                         {c.phone ?? "—"}
-                        {c.birth_date && <span className="ml-2 text-pink-300">🎂 {formatDay(c.birth_date).slice(0, 5)}</span>}
+                        {c.birth_date ? (
+                          <span className="ml-2 text-pink-300">🎂 {formatDay(c.birth_date).slice(0, 5)}</span>
+                        ) : (
+                          <span
+                            className="ml-2 rounded bg-amber-950 px-2 py-0.5 text-xs text-amber-300"
+                            title="Sem a data, este cliente não aparece nos aniversários nem recebe a promoção. Clique em Editar para colocar."
+                          >
+                            🎂 Sem aniversário cadastrado
+                          </span>
+                        )}
                       </p>
                       <p className="flex flex-wrap gap-1.5 pt-0.5 text-xs">
                         {customerOrders.length === 0 ? (

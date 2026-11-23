@@ -178,8 +178,9 @@ class PublicSignupRequest(BaseModel):
 
     name: str = Field(min_length=2, max_length=120)
     phone: str = Field(min_length=8, max_length=30)
-    # Obrigatório: o cadastro existe para mandar promoções de aniversário.
-    birth_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    # Obrigatório no link de cadastro (promoções de aniversário); no pedido
+    # pelo site é opcional — o gestor avisa quando falta.
+    birth_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
     neighborhood: str | None = Field(default=None, max_length=80)
     email: EmailStr | None = None
     source: str = Field(default="cadastro", pattern=r"^(cadastro|pedido)$")
@@ -203,6 +204,12 @@ class PublicSignupRequest(BaseModel):
     @classmethod
     def _birth(cls, v: str | None) -> str | None:
         return _check_birth(v)
+
+    @model_validator(mode="after")
+    def _birth_required_on_signup(self) -> "PublicSignupRequest":
+        if self.source == "cadastro" and not self.birth_date:
+            raise ValueError("Informe a data de nascimento.")
+        return self
 
 
 class UpdateCustomerRequest(BaseModel):

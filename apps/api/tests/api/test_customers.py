@@ -253,16 +253,19 @@ def test_public_signup_creates_and_completes_customer(client: TestClient):
     # Mesmo telefone (com 55 na frente): não duplica, só completa o aniversário.
     r = client.post(url, json={"name": "Outra", "phone": "5521998765432", "birth_date": "1991-06-07", "email": "ana@x.io", "source": "pedido"})
     assert r.status_code == 204, r.text
-    # Sem aniversário não cadastra.
+    # Link de cadastro sem aniversário: recusado. Pelo pedido: entra sem a data.
     assert client.post(url, json={"name": "Sem Data", "phone": "21933334444"}).status_code == 422
+    assert client.post(url, json={"name": "Pedido Sem Data", "phone": "21955556666", "source": "pedido"}).status_code == 204
     # Robô (campo escondido preenchido) é ignorado.
     assert client.post(url, json={"name": "Bot", "phone": "21911112222", "birth_date": "1990-01-01", "website": "x"}).status_code == 204
     # Telefone inválido.
     assert client.post(url, json={"name": "Zé", "phone": "123", "birth_date": "1990-01-01"}).status_code == 422
 
     customers = client.get(f"/api/v1/organizations/{org_id}/customers", headers=headers).json()
-    assert len(customers) == 1
-    c = customers[0]
+    assert len(customers) == 2
+    sem = next(c for c in customers if c["name"] == "Pedido Sem Data")
+    assert sem["birth_date"] is None
+    c = next(c for c in customers if c["name"] == "Ana Lima")
     assert c["name"] == "Ana Lima"
     assert c["birth_date"] == "1990-05-04"  # a data que já existia não é trocada
     assert c["email"] == "ana@x.io"
