@@ -100,6 +100,11 @@ export function FlavorsSection({
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm animate-fade-in sm:p-6"
           onClick={() => setOpen(null)}
+          // A janela fica no <body>, mas o React repassa os toques para a página
+          // embaixo — sem isto, deslizar a foto trocava a aba da loja.
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
         >
           <button
             aria-label="Fechar"
@@ -207,6 +212,11 @@ export function GallerySection({ photos, heading }: { photos?: StoreGalleryPhoto
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm animate-fade-in"
           onClick={() => setOpen(null)}
+          // A janela fica no <body>, mas o React repassa os toques para a página
+          // embaixo — sem isto, deslizar a foto trocava a aba da loja.
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
         >
           <button
             aria-label="Fechar"
