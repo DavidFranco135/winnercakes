@@ -892,7 +892,7 @@ export function Storefront({ slug }: { slug: string }) {
                         src="/brand/selo-winner.png"
                         alt="Selo Winner Cakes de qualidade"
                         loading="lazy"
-                        className="h-28 w-28 drop-shadow-lg sm:h-32 sm:w-32"
+                        className="h-44 w-44 drop-shadow-lg sm:h-56 sm:w-56"
                       />
                       <p className="text-center font-[family-name:var(--font-display)] text-lg italic text-[var(--accent-text)]">
                         Feito com amor, para momentos inesquecíveis!
