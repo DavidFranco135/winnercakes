@@ -61,6 +61,15 @@ function IconDollar({ className }: { className?: string }) {
   );
 }
 
+function IconChat({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className}>
+      <path d="M4 5h16v11H9l-5 4z" strokeLinejoin="round" />
+      <path d="M8 9.5h8M8 12.5h5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function IconCpu({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className}>
@@ -135,6 +144,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/festival", label: "Festival ao vivo", icon: IconCake },
   { href: "/pedidos", label: "Pedidos", icon: IconClipboard },
   { href: "/clientes", label: "Clientes", icon: IconUsers },
+  { href: "/mensagens", label: "Mensagens", icon: IconChat },
   { href: "/estoque", label: "Estoque", icon: IconArchive },
   { href: "/financeiro", label: "Financeiro", icon: IconDollar },
   { href: "/precificacao", label: "Precificação", icon: IconPricing },
