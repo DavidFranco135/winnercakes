@@ -17,7 +17,7 @@ import { STATUS_LABELS, STATUS_TONE, orderStage, type OrderStage } from "@/lib/o
 function SignupLinkCard() {
   const [copied, setCopied] = useState(false);
   const url = typeof window !== "undefined" ? `${window.location.origin}/cadastro` : "/cadastro";
-  const message = `Oi! Faça seu cadastro na Winner Cakes e receba promoções no seu aniversário 🎂 ${url}`;
+  const message = `Oi! Faça seu cadastro na Winner Cakes e receba nossas novidades e promoções 🍰 ${url}`;
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-rose-900/60 bg-rose-950/20 p-4 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1 space-y-1">

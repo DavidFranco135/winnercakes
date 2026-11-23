@@ -238,10 +238,10 @@ export function CartDrawer({
                     onChange={(e) => onCustomer({ ...customer, birth: e.target.value })}
                     className="min-w-0 flex-1 bg-transparent py-1 text-[var(--ink)] outline-none"
                   />
-                  <span className="shrink-0 text-[11px]">p/ promoções</span>
+                  <span className="shrink-0 text-[11px]">opcional</span>
                 </label>
                 <p className="-mt-1 px-1 text-[11px] text-[var(--muted)]">
-                  Com nome e WhatsApp você já fica cadastrado(a). Coloque o aniversário para receber as promoções de aniversário.
+                  Com nome e WhatsApp você já fica cadastrado(a) para receber novidades e promoções.
                 </p>
                 <input
                   value={customer.when ?? ""}

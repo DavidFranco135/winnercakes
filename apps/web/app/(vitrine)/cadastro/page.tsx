@@ -31,7 +31,7 @@ export default function CadastroPage() {
     setError(null);
     if (name.trim().length < 2) return setError("Escreva o seu nome.");
     if (!validPhone(phone)) return setError("Confira o WhatsApp: DDD + número.");
-    if (!birth) return setError("Coloque a sua data de nascimento: é por ela que mandamos a promoção de aniversário.");
+    if (!birth) return setError("Coloque a sua data de nascimento.");
     if (!agree) return setError("Marque a autorização para podermos falar com você.");
     setSending(true);
     try {
@@ -62,7 +62,7 @@ export default function CadastroPage() {
         <p className="max-w-sm text-sm text-[#ffd9cf]">
           {done
             ? "Obrigada! Agora você recebe as novidades da Winner Cakes."
-            : "Leva menos de 1 minuto. Receba as novidades dos festivais e promoções no seu aniversário 🎂"}
+            : "Leva menos de 1 minuto. Receba as novidades e promoções da Winner Cakes 🍰"}
         </p>
       </header>
 
@@ -102,8 +102,7 @@ export default function CadastroPage() {
               </label>
               <label className="block space-y-1.5">
                 <span className="text-sm font-semibold">Data de nascimento *</span>
-                <span className="block text-xs text-[#a8857a]">Para receber as promoções de aniversário.</span>
-                <input
+                                <input
                   className={field}
                   type="date"
                   value={birth}

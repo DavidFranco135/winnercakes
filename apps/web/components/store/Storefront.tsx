@@ -907,11 +907,11 @@ export function Storefront({ slug }: { slug: string }) {
                     href={SIGNUP_PATH}
                     className="fx-spotlight group flex flex-col items-center gap-4 overflow-hidden rounded-[32px] bg-[var(--accent)] px-6 py-7 text-center text-[var(--accent-ink)] shadow-lg transition hover:-translate-y-1 hover:shadow-xl sm:flex-row sm:px-10 sm:text-left"
                   >
-                    <span className="text-5xl transition group-hover:scale-110 sm:text-6xl">🎂</span>
+                    <span className="text-5xl transition group-hover:scale-110 sm:text-6xl">🍰</span>
                     <span className="flex-1 space-y-1">
                       <span className="block font-[family-name:var(--font-display)] text-2xl font-semibold sm:text-3xl">Faça seu cadastro</span>
                       <span className="block text-sm opacity-90">
-                        Leva menos de 1 minuto: receba as novidades dos festivais e promoções no seu aniversário.
+                        Leva menos de 1 minuto: receba as novidades e promoções da Winner Cakes.
                       </span>
                     </span>
                     <span className="rounded-full bg-[var(--accent-ink)] px-6 py-3 text-sm font-semibold text-[var(--accent)] shadow transition group-hover:brightness-95">
