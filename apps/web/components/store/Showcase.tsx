@@ -9,6 +9,15 @@ import { formatBRL } from "@/lib/store";
 import { IMG_WIDTH, imgSrc } from "@/lib/img";
 import { IconClose, IconPlus, IconWhatsapp, Reveal } from "./ui";
 
+// Miniatura do sabor: as fotos oficiais (/brand/sabores/x.jpg) são quadros com
+// as camadas explicadas; no cartão vai só o recorte do bolo (/brand/sabores/mini/x.jpg)
+// e o quadro completo abre ao tocar. Foto enviada pelo gestor usa ela mesma.
+function flavorThumb(url: string): string {
+  return url.startsWith("/brand/sabores/") && !url.includes("/mini/")
+    ? url.replace("/brand/sabores/", "/brand/sabores/mini/")
+    : imgSrc(url, IMG_WIDTH.card);
+}
+
 export function FlavorsSection({
   flavors,
   heading,
@@ -19,26 +28,60 @@ export function FlavorsSection({
   footer?: React.ReactNode;
 }) {
   const list = (flavors ?? []).filter((f) => f.name.trim());
+  const withPhoto = list.filter((f) => f.photo_url);
+  const [open, setOpen] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (open === null) return;
+    const n = withPhoto.length;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(null);
+      if (e.key === "ArrowRight") setOpen((i) => (i === null ? i : (i + 1) % n));
+      if (e.key === "ArrowLeft") setOpen((i) => (i === null ? i : (i - 1 + n) % n));
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, withPhoto.length]);
+
   if (list.length === 0) return null;
+  const current = open !== null ? withPhoto[open] : null;
+  const step = (d: number) => setOpen((i) => (i === null ? i : (i + d + withPhoto.length) % withPhoto.length));
+
   return (
     <section className="space-y-7">
       <Reveal>{heading}</Reveal>
+      <p className="-mt-3 text-center text-sm text-[var(--muted)]">Toque no sabor para ver todas as camadas do recheio.</p>
       <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 sm:gap-4 lg:grid-cols-6 xl:grid-cols-7">
         {list.map((f, i) => (
           <Reveal key={`${f.name}-${i}`} delay={(i % 6) * 50}>
-            <div
+            <button
+              type="button"
+              disabled={!f.photo_url}
+              onClick={() => f.photo_url && setOpen(withPhoto.indexOf(f))}
               style={{ "--fx-delay": `${(i * 1.3) % 7.5}s` } as React.CSSProperties}
-              className="fx-spotlight fx-card-gleam group h-full overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] shadow-sm transition duration-500 hover:-translate-y-1.5 hover:shadow-xl"
+              className="fx-spotlight fx-card-gleam group block h-full w-full overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] text-left shadow-sm transition duration-500 hover:-translate-y-1.5 hover:shadow-xl disabled:cursor-default"
             >
               {f.photo_url ? (
-                <div className="aspect-square overflow-hidden bg-[var(--accent-soft)]">
+                <div className="relative aspect-square overflow-hidden bg-[var(--accent-soft)]">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={imgSrc(f.photo_url, IMG_WIDTH.card)}
+                    src={flavorThumb(f.photo_url)}
                     alt={f.name}
                     loading="lazy"
+                    onError={(e) => {
+                      const full = imgSrc(f.photo_url!, IMG_WIDTH.card);
+                      if (e.currentTarget.src !== new URL(full, location.href).href) e.currentTarget.src = full;
+                    }}
                     className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.06]"
                   />
+                  <span className="absolute bottom-1.5 right-1.5 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm sm:text-[11px]">
+                    Ver camadas
+                  </span>
                 </div>
               ) : (
                 <div className="flex aspect-square items-center justify-center bg-[var(--accent-soft)] text-3xl">🍰</div>
@@ -46,11 +89,56 @@ export function FlavorsSection({
               <p className="bg-[var(--accent)] px-2 py-2 text-center text-[11px] font-bold uppercase leading-tight tracking-wide text-[var(--accent-ink)] sm:text-xs">
                 {f.name}
               </p>
-            </div>
+            </button>
           </Reveal>
         ))}
       </div>
       {footer}
+
+      {current && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm animate-fade-in sm:p-6"
+          onClick={() => setOpen(null)}
+        >
+          <button
+            aria-label="Fechar"
+            onClick={() => setOpen(null)}
+            className="absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"
+          >
+            <IconClose className="h-5 w-5" />
+          </button>
+          {withPhoto.length > 1 && (
+            <>
+              <button
+                aria-label="Sabor anterior"
+                onClick={(e) => { e.stopPropagation(); step(-1); }}
+                className="absolute left-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-2xl text-white hover:bg-white/25 sm:left-4"
+              >
+                ‹
+              </button>
+              <button
+                aria-label="Próximo sabor"
+                onClick={(e) => { e.stopPropagation(); step(1); }}
+                className="absolute right-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-2xl text-white hover:bg-white/25 sm:right-4"
+              >
+                ›
+              </button>
+            </>
+          )}
+          <figure className="max-h-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imgSrc(current.photo_url!, IMG_WIDTH.hero)}
+              alt={`${current.name}: camadas do recheio`}
+              className="max-h-[84vh] w-auto max-w-full rounded-2xl object-contain"
+            />
+            <figcaption className="pt-3 text-center text-sm text-white/85">
+              {current.name} · {(open ?? 0) + 1} de {withPhoto.length}
+            </figcaption>
+          </figure>
+        </div>,
+        document.body
+      )}
     </section>
   );
 }
