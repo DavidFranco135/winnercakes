@@ -754,7 +754,7 @@ export function Storefront({ slug }: { slug: string }) {
                 src={imgSrc(logoForTheme(settings.logo_url, effectiveTheme === "winner-noite" || effectiveTheme === "dark"), IMG_WIDTH.thumb)}
                 alt={storeName}
                 // Logo inteira, no formato dela (redonda, larga ou quadrada).
-                className="fx-logo h-14 w-auto max-w-[150px] shrink-0 object-contain sm:h-16 sm:max-w-[200px]"
+                className="fx-logo h-16 w-auto max-w-[160px] shrink-0 object-contain sm:h-20 sm:max-w-[220px]"
               />
             ) : (
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--accent)] font-[family-name:var(--font-display)] text-lg font-semibold text-[var(--accent-ink)] shadow-md">
