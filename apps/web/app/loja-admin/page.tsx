@@ -1937,37 +1937,6 @@ function FestivalEditor({
 
 
 // ---- Sabores -----------------------------------------------------------------
-// Sabores com as fotos novas (quadro com as camadas do recheio), já no site em
-// /brand/sabores/. O botão no editor troca a lista inteira por esta.
-const OFFICIAL_FLAVORS: StoreFlavor[] = [
-  { name: "Prestígio com brownie", photo_url: "/brand/sabores/prestigio-com-brownie.jpg" },
-  { name: "Ninho com Nutella", photo_url: "/brand/sabores/ninho-com-nutella.jpg" },
-  { name: "Cajuzinho", photo_url: "/brand/sabores/cajuzinho.jpg" },
-  { name: "Ferrero Rocher", photo_url: "/brand/sabores/ferrero-rocher.jpg" },
-  { name: "Bolo sensação", photo_url: "/brand/sabores/bolo-sensacao.jpg" },
-  { name: "Maracutella", photo_url: "/brand/sabores/maracutella.jpg" },
-  { name: "Pudim de ninho com frutas vermelhas", photo_url: "/brand/sabores/pudim-de-ninho-frutas-vermelhas.jpg" },
-  { name: "Torta salgada", photo_url: "/brand/sabores/torta-salgada.jpg" },
-  { name: "Torta brownie", photo_url: "/brand/sabores/torta-brownie.jpg" },
-  { name: "Suprema de brownie", photo_url: "/brand/sabores/suprema-de-brownie.jpg" },
-  { name: "Palha italiana", photo_url: "/brand/sabores/palha-italiana.jpg" },
-  { name: "Red velvet", photo_url: "/brand/sabores/red-velvet.jpg" },
-  { name: "Nozes com doce de leite", photo_url: "/brand/sabores/nozes-com-doce-de-leite.jpg" },
-  { name: "Nozes", photo_url: "/brand/sabores/nozes.jpg" },
-  { name: "Bolo pudim", photo_url: "/brand/sabores/bolo-pudim.jpg" },
-  { name: "Kinder Bueno", photo_url: "/brand/sabores/kinder-bueno.jpg" },
-  { name: "Rafaello", photo_url: "/brand/sabores/rafaello.jpg" },
-  { name: "Floresta negra", photo_url: "/brand/sabores/floresta-negra.jpg" },
-  { name: "Matilda cake", photo_url: "/brand/sabores/matilda-cake.jpg" },
-  { name: "Chocolatuda", photo_url: "/brand/sabores/chocolatuda.jpg" },
-  { name: "Maramorango", photo_url: "/brand/sabores/maramorango.jpg" },
-  { name: "Maracujá com chocolate", photo_url: "/brand/sabores/maracuja-com-chocolate.jpg" },
-  { name: "Olho de sogra", photo_url: "/brand/sabores/olho-de-sogra.jpg" },
-  { name: "2 amores com Nutella", photo_url: "/brand/sabores/2-amores-com-nutella.jpg" },
-  { name: "Abacaxi com coco", photo_url: "/brand/sabores/abacaxi-com-coco.jpg" },
-  { name: "Morango com ninho", photo_url: "/brand/sabores/morango-com-ninho.jpg" },
-];
-
 function FlavorsEditor({
   title,
   flavors,
@@ -1995,17 +1964,6 @@ function FlavorsEditor({
         <span className="text-xs text-neutral-500">Título do quadro</span>
         <input className={input} value={title} maxLength={80} onChange={(e) => onChange({ flavors_title: e.target.value })} />
       </label>
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-800/60 bg-amber-950/30 p-3 text-sm">
-        <span className="flex-1 text-amber-200">
-          Fotos novas com as camadas do recheio ({OFFICIAL_FLAVORS.length} sabores). O botão troca a lista abaixo por elas; o site só muda depois de <b>Salvar</b>.
-        </span>
-        <button
-          onClick={() => set(OFFICIAL_FLAVORS.map((f) => ({ ...f })))}
-          className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-black hover:bg-amber-400"
-        >
-          Usar os sabores com fotos novas
-        </button>
-      </div>
       <ul className="grid gap-2 sm:grid-cols-2">
         {flavors.map((f, i) => (
           <li key={i} className="flex items-center gap-2 rounded-lg border border-neutral-800 p-2">
