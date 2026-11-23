@@ -131,7 +131,7 @@ export function SplashIntro({ logoUrl, name, ready }: { logoUrl?: string; name: 
             />
           ))}
 
-        <div className="store-splash-disc">
+        <div className={`store-splash-disc ${logo === SPLASH_SEAL ? "has-seal" : ""}`}>
           {logo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img

@@ -351,7 +351,11 @@
   transition: opacity 0.4s ease;
 }
 .store-splash-logo.is-loaded { opacity: 1; }
-/* Selo redondo: ocupa o disco inteiro, sem mesclar com o fundo creme. */
+/* Selo redondo: ocupa o disco inteiro, sem o fundo creme em volta. */
+.store-splash-disc.has-seal {
+  background: transparent;
+  box-shadow: 0 0 60px -6px rgba(255, 199, 44, 0.55);
+}
 .store-splash-logo.is-seal { width: 100%; height: 100%; mix-blend-mode: normal; }
 .store-splash-initial {
   font-family: var(--font-display), Georgia, serif;
