@@ -107,6 +107,9 @@ export default function LojaAdminPage() {
   // aparelho ou endereço (ex.: pages.dev × domínio próprio), o rascunho velho
   // é descartado em vez de cobrir as mudanças mais novas.
   const savedSig = useRef("");
+  // A loja foi salva em outra aba/aparelho depois que esta página abriu:
+  // salvar daqui apagaria aquelas mudanças, então pergunta antes.
+  const [conflict, setConflict] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken || !currentOrganizationId) return;
@@ -501,11 +504,19 @@ export default function LojaAdminPage() {
     update({ hidden_product_ids: visible ? others : [...others, ...ids] });
   }
 
-  async function handleSave() {
+  async function handleSave(force = false) {
     if (!accessToken) return;
     setIsSaving(true);
     setError(null);
     try {
+      if (!force) {
+        const current = await apiFetch<StoreAdminResponse>(`${orgPath}/store`, { accessToken });
+        if (savedSig.current && settingsSignature(current.settings) !== savedSig.current) {
+          setConflict(true);
+          return;
+        }
+      }
+      setConflict(false);
       const body = {
         ...settings,
         whatsapp: normalizeWhatsapp(settings.whatsapp) || DEFAULT_WHATSAPP,
@@ -1660,6 +1671,28 @@ export default function LojaAdminPage() {
 
       {!isLoading && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-800 bg-neutral-950/95 px-4 py-3 backdrop-blur lg:left-60">
+          {conflict && (
+            <div className="mx-auto mb-3 max-w-4xl space-y-2 rounded-lg border border-amber-700 bg-amber-950/60 p-3 text-sm text-amber-100">
+              <p>
+                <b>Atenção:</b> a loja foi alterada em outra aba ou aparelho depois que você abriu esta página. Se salvar daqui,
+                aquelas mudanças serão apagadas.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    setConflict(false);
+                    discardDraft();
+                  }}
+                  className="rounded-lg bg-amber-500 px-4 py-1.5 font-semibold text-black hover:bg-amber-400"
+                >
+                  Carregar a versão mais nova (recomendado)
+                </button>
+                <button onClick={() => handleSave(true)} className="rounded-lg border border-amber-700 px-4 py-1.5 hover:bg-amber-900/50">
+                  Salvar mesmo assim
+                </button>
+              </div>
+            </div>
+          )}
           <div className="mx-auto flex max-w-4xl items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <p className="text-xs text-neutral-500">
@@ -1676,7 +1709,7 @@ export default function LojaAdminPage() {
               )}
             </div>
             <button
-              onClick={handleSave}
+              onClick={() => handleSave()}
               disabled={isSaving || !dirty}
               className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40"
             >

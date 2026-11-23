@@ -309,15 +309,24 @@ export default function ProdutosPage() {
     return saveStore({ categories: next });
   }
 
-  async function saveStore(patch: Partial<StoreSettings>): Promise<boolean> {
+  // patch pode ser uma função: recebe o que está salvo agora e devolve só o que muda.
+  async function saveStore(
+    patch: Partial<StoreSettings> | ((current: StoreSettings) => Partial<StoreSettings>)
+  ): Promise<boolean> {
     if (!accessToken || !storeSettings) return false;
     setIsSavingCategories(true);
     setError(null);
     try {
+      // Parte sempre do que está salvo agora (não da cópia de quando a tela
+      // abriu): assim não desfaz o que foi mudado em Minha Loja ou em outro
+      // aparelho enquanto esta tela estava aberta.
+      const fresh = await apiFetch<StoreAdminResponse>(`${orgPath}/store`, { accessToken });
+      const changes = typeof patch === "function" ? patch(fresh.settings) : patch;
+      if (Object.keys(changes).length === 0) return true;
       const saved = await apiFetch<StoreAdminResponse>(`${orgPath}/store`, {
         method: "PUT",
         accessToken,
-        body: JSON.stringify({ ...storeSettings, ...patch }),
+        body: JSON.stringify({ ...fresh.settings, ...changes }),
       });
       setStoreSettings({ ...saved.settings, categories: saved.settings.categories ?? [] });
       refreshPublicStoreCache(saved.slug);
@@ -358,10 +367,10 @@ export default function ProdutosPage() {
   const isHidden = (productId: string) => hiddenIds.includes(productId);
 
   async function toggleVisibility(product: Product) {
-    await saveStore({
-      hidden_product_ids: isHidden(product.id)
-        ? hiddenIds.filter((id) => id !== product.id)
-        : [...hiddenIds, product.id],
+    const hide = !isHidden(product.id);
+    await saveStore((cur) => {
+      const now = cur.hidden_product_ids ?? [];
+      return { hidden_product_ids: hide ? [...now.filter((id) => id !== product.id), product.id] : now.filter((id) => id !== product.id) };
     });
   }
 
@@ -553,44 +562,47 @@ export default function ProdutosPage() {
         productId = created.id;
       }
       if (productId && storeSettings) {
-        const patch: Partial<StoreSettings> = {};
-        const next = assignProduct(categories, productId, formCategoryIds);
-        if (next.some((c, i) => c !== categories[i])) patch.categories = next;
-        const onRequest = storeSettings.price_on_request_product_ids ?? [];
-        if (onRequest.includes(productId) !== formPriceOnRequest) {
-          patch.price_on_request_product_ids = formPriceOnRequest
-            ? [...onRequest, productId]
-            : onRequest.filter((id) => id !== productId);
-        }
-        const models = storeSettings.model_urls ?? {};
-        const modelUrl = formModelUrl.trim();
-        if ((models[productId] ?? "") !== modelUrl) {
-          const nextModels = { ...models };
-          if (modelUrl) nextModels[productId] = modelUrl;
-          else delete nextModels[productId];
-          patch.model_urls = nextModels;
-        }
-        const discounts = storeSettings.product_discounts ?? {};
-        const discount = Math.max(0, Math.min(90, Number(formDiscount.replace(",", ".")) || 0));
-        if ((discounts[productId] ?? 0) !== discount) {
-          const nextDiscounts = { ...discounts };
-          if (discount > 0) nextDiscounts[productId] = discount;
-          else delete nextDiscounts[productId];
-          patch.product_discounts = nextDiscounts;
-        }
-        const excludedNow = storeSettings.promo_excluded_ids ?? [];
-        if (excludedNow.includes(productId) !== formPromoExcluded) {
-          patch.promo_excluded_ids = formPromoExcluded
-            ? [...excludedNow, productId]
-            : excludedNow.filter((id) => id !== productId);
-        }
-        const hiddenNow = storeSettings.hidden_product_ids ?? [];
-        if (hiddenNow.includes(productId) === formVisible) {
-          patch.hidden_product_ids = formVisible
-            ? hiddenNow.filter((id) => id !== productId)
-            : [...hiddenNow, productId];
-        }
-        if (Object.keys(patch).length > 0) await saveStore(patch);
+        const pid = productId;
+        await saveStore((cur) => {
+          const patch: Partial<StoreSettings> = {};
+          const next = assignProduct(cur.categories ?? [], pid, formCategoryIds);
+          if (next.some((c, i) => c !== (cur.categories ?? [])[i])) patch.categories = next;
+          const onRequest = cur.price_on_request_product_ids ?? [];
+          if (onRequest.includes(pid) !== formPriceOnRequest) {
+            patch.price_on_request_product_ids = formPriceOnRequest
+              ? [...onRequest, pid]
+              : onRequest.filter((id) => id !== pid);
+          }
+          const models = cur.model_urls ?? {};
+          const modelUrl = formModelUrl.trim();
+          if ((models[pid] ?? "") !== modelUrl) {
+            const nextModels = { ...models };
+            if (modelUrl) nextModels[pid] = modelUrl;
+            else delete nextModels[pid];
+            patch.model_urls = nextModels;
+          }
+          const discounts = cur.product_discounts ?? {};
+          const discount = Math.max(0, Math.min(90, Number(formDiscount.replace(",", ".")) || 0));
+          if ((discounts[pid] ?? 0) !== discount) {
+            const nextDiscounts = { ...discounts };
+            if (discount > 0) nextDiscounts[pid] = discount;
+            else delete nextDiscounts[pid];
+            patch.product_discounts = nextDiscounts;
+          }
+          const excludedNow = cur.promo_excluded_ids ?? [];
+          if (excludedNow.includes(pid) !== formPromoExcluded) {
+            patch.promo_excluded_ids = formPromoExcluded
+              ? [...excludedNow, pid]
+              : excludedNow.filter((id) => id !== pid);
+          }
+          const hiddenNow = cur.hidden_product_ids ?? [];
+          if (hiddenNow.includes(pid) === formVisible) {
+            patch.hidden_product_ids = formVisible
+              ? hiddenNow.filter((id) => id !== pid)
+              : [...hiddenNow, pid];
+          }
+          return patch;
+        });
       }
       resetForm();
       refreshPublicStoreCache(storeSlug);
